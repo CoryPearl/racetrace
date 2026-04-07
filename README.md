@@ -6,6 +6,8 @@ This project is a **browser-based** Formula 1 session replay and telemetry viewe
 
 The repo contains two related layouts: a single-folder **local** bundle ([`f1-web-local/`](f1-web-local/)) and a split **server** bundle ([`f1-web-server/`](f1-web-server/)) with optional object storage for schedules, replay JSON, and compressed pickles. Both share the same core ideas (schedules under `data/schedule/`, optional static replay bundles, helper scripts for prefetch and export).
 
+Note: The local version may be slightly behind the server version depending on how lazy I am
+
 ---
 
 ## Credit
