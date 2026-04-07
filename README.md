@@ -1,12 +1,12 @@
 # F1 Race Replay (web and 3d!)
 
-Live site: [https://racetrace-beta.vercel.app/](https://racetrace-beta.vercel.app/)
+Live site: [https://racetrace-beta.vercel.app/](https://racetrace-beta.vercel.app/) (If it's not working it's probobly handling too many people, theres a lot of data to send and I can't afford a good server)
 
 This project is a **browser-based** Formula 1 session replay and telemetry viewer. You load a race weekend session and watch cars move on the track with timing, tyres, and playback controls—similar in spirit to a live broadcast replay, but driven by [FastF1](https://theoehrly.github.io/Fast-F1/) data and optional precomputed telemetry. The stack here is a **FastAPI** backend and a **static JavaScript** front end (no desktop game engine).
 
 The repo contains two related layouts: a single-folder **local** bundle ([`f1-web-local/`](f1-web-local/)) and a split **server** bundle ([`f1-web-server/`](f1-web-server/)) with optional object storage for schedules, replay JSON, and compressed pickles. Both share the same core ideas (schedules under `data/schedule/`, optional static replay bundles, helper scripts for prefetch and export).
 
-Note: The local version may be slightly behind the server version depending on how lazy I am
+**Note**: The local version may be slightly behind the server version depending on how lazy I am
 
 ---
 
