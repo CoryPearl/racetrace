@@ -13,10 +13,13 @@ import fastf1
 from src.lib.tyres import TYRE_EXPECTED_STINT_LAPS
 from src.f1_data import (
     _computed_telemetry_pkl_candidates,
+    _computed_telemetry_pkl_candidates_from_schedule,
     get_circuit_rotation,
     get_race_telemetry,
     load_computed_pickle_first,
     load_session,
+    load_session_laps_only,
+    load_telemetry_onto_session,
 )
 from src.web.track_geometry import build_track_from_example_lap, extract_race_events
 
@@ -158,13 +161,38 @@ def driver_teams_by_code(session) -> dict[str, str]:
 
 def _skip_fastf1_when_precomputed() -> bool:
     """
-    When precomputed telemetry pickle exists (disk or R2), skip ``load_session()`` / live API.
+    When precomputed telemetry pickle exists on disk, skip ``load_session()`` / live API.
 
-    Default **on** (``1``) so servers that only store ``compressed_computed_data/*.pkl.xz`` in R2
+    Default **on** (``1``) so servers that only store ``compressed_computed_data/*.pkl.xz``
     do not hit the F1 livetiming API. Set ``SKIP_FASTF1_WHEN_PRECOMPUTED=0`` to restore the old
     behavior (always load FastF1 for track metadata, teams, rotation).
     """
     v = os.environ.get("SKIP_FASTF1_WHEN_PRECOMPUTED", "1").strip().lower()
+    return v not in ("0", "false", "no")
+
+
+def _precomputed_replay_load_fastf1_laps() -> bool:
+    """
+    When a precomputed pickle is used (``skip_fastf1``), still call FastF1 with
+    ``load(laps=True, telemetry=False)`` so stage-2 cache (``compressed_fastf1-cache``) is used
+    for lap timing / metadata — without loading heavy car telemetry (frames stay on the pickle).
+
+    Default **on** (``1``). Set ``PRECOMPUTED_REPLAY_LOAD_FASTF1_LAPS=0`` for the old behavior
+    (no FastF1 session at all: empty event names, rotation 0; offline-only with no cache).
+    """
+    v = os.environ.get("PRECOMPUTED_REPLAY_LOAD_FASTF1_LAPS", "1").strip().lower()
+    return v not in ("0", "false", "no")
+
+
+def _precomputed_replay_track_telemetry() -> bool:
+    """
+    After lap-only load, also load car telemetry for building track outline / DRS zones from a real
+    ``Lap.get_telemetry()`` sample (cache-backed). Default **on** (``1``).
+
+    Set ``PRECOMPUTED_REPLAY_TRACK_TELEMETRY=0`` to use the sparse frame-sampled polyline only
+    (faster, rougher track / DRS).
+    """
+    v = os.environ.get("PRECOMPUTED_REPLAY_TRACK_TELEMETRY", "1").strip().lower()
     return v not in ("0", "false", "no")
 
 
@@ -255,8 +283,15 @@ def load_race_replay_payload(
     API so only one FastF1 session loads. Static export may pass True for parity with older exports.
 
     When a precomputed telemetry pickle exists and ``SKIP_FASTF1_WHEN_PRECOMPUTED`` is on (default),
-    ``load_session()`` is skipped and track geometry is derived from frames (no livetiming API).
-    Set ``SKIP_FASTF1_WHEN_PRECOMPUTED=0`` to always call FastF1 after loading a pickle.
+    full ``load_session()`` (with car telemetry) is skipped; frames come from the pickle.
+    By default ``PRECOMPUTED_REPLAY_LOAD_FASTF1_LAPS=1`` still runs ``load_session_laps_only()``
+    so FastF1 reads lap timing from ``compressed_fastf1-cache`` (``*.ff1pkl.xz``) for event
+    metadata, teams, and circuit rotation — without re-fetching per-driver car telemetry.
+
+    Set ``PRECOMPUTED_REPLAY_LOAD_FASTF1_LAPS=0`` to skip any FastF1 session load (legacy).
+    Set ``PRECOMPUTED_REPLAY_TRACK_TELEMETRY=0`` to build track from replay frames only (no second
+    ``session.load(telemetry=True)``; rougher outline / DRS).
+    Set ``SKIP_FASTF1_WHEN_PRECOMPUTED=0`` to always full-load FastF1 after loading a pickle.
     """
     if session_type not in ("R", "S", "Q"):
         raise ValueError("session_type must be 'R', 'S', or 'Q' for replay")
@@ -268,18 +303,30 @@ def load_race_replay_payload(
     else:
         cache_suffix = "race"
 
-    # Try precomputed pickle (local compressed_computed_data/ or R2) *before* session.load().
-    # Same filenames as get_race_telemetry; avoids live timing API when the .pkl.xz exists remotely.
-    session = fastf1.get_session(year, round_number, session_type)
+    # Try precomputed pickle *before* session.load(): schedule JSON gives stable names even when
+    # ``session.event`` is not populated yet (avoids full FastF1 API then pickle hit).
     race_telemetry = None
     try:
         race_telemetry = dict(
             load_computed_pickle_first(
-                _computed_telemetry_pkl_candidates(session, cache_suffix)
+                _computed_telemetry_pkl_candidates_from_schedule(
+                    year, round_number, session_type, cache_suffix
+                )
             )
         )
     except FileNotFoundError:
         pass
+
+    session = fastf1.get_session(year, round_number, session_type)
+    if race_telemetry is None:
+        try:
+            race_telemetry = dict(
+                load_computed_pickle_first(
+                    _computed_telemetry_pkl_candidates(session, cache_suffix)
+                )
+            )
+        except FileNotFoundError:
+            pass
 
     skip_fastf1 = race_telemetry is not None and _skip_fastf1_when_precomputed()
 
@@ -287,7 +334,10 @@ def load_race_replay_payload(
         session = load_session(year, round_number, session_type)
         race_telemetry = dict(get_race_telemetry(session, session_type=session_type))
     elif skip_fastf1:
-        session = None
+        if _precomputed_replay_load_fastf1_laps():
+            session = load_session_laps_only(year, round_number, session_type)
+        else:
+            session = None
     else:
         session = load_session(year, round_number, session_type)
 
@@ -295,7 +345,24 @@ def load_race_replay_payload(
         race_telemetry["tyre_expected_laps"] = _tyre_expected_laps_json()
 
     example_lap = None
-    if skip_fastf1:
+    if (
+        skip_fastf1
+        and session is not None
+        and _precomputed_replay_track_telemetry()
+    ):
+        try:
+            load_telemetry_onto_session(session)
+            example_lap = load_example_lap_for_track(
+                year,
+                round_number,
+                session_type,
+                session,
+                skip_quali_for_track=not prefer_quali_for_track_geometry,
+            )
+        except Exception:
+            example_lap = None
+
+    if example_lap is None and skip_fastf1:
         frames = race_telemetry.get("frames") or []
         leader = _leader_code_from_frame0(frames)
         if leader:
@@ -308,6 +375,11 @@ def load_race_replay_payload(
     if example_lap is None:
         if session is None:
             session = load_session(year, round_number, session_type)
+        elif skip_fastf1:
+            try:
+                load_telemetry_onto_session(session)
+            except Exception:
+                pass
         example_lap = load_example_lap_for_track(
             year,
             round_number,

@@ -7,7 +7,6 @@ fastapi
 uvicorn[standard]
 gunicorn
 python-dotenv
-boto3
 
 # --- Telemetry & data ---
 # fastf1: sessions, API cache, telemetry loading

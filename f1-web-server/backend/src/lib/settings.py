@@ -37,7 +37,10 @@ class SettingsManager:
     DEFAULTS = {
         # Empty: use default_fastf1_cache_user_path() (see abs_fastf1_cache_dir in fastf1_compressed_cache).
         "cache_location": "",
-        "computed_data_location": "computed_data",
+        # Telemetry pickles: default ``compressed_computed_data/`` (.pkl.xz from compress_pkl_cache;
+        # optional plain .pkl in the same tree). Relative to ``f1-web-server/backend/`` unless absolute.
+        # Use ``computed_data`` here if you keep uncompressed pickles only under ``computed_data/``.
+        "computed_data_location": "compressed_computed_data",
     }
 
     _instance: Optional["SettingsManager"] = None

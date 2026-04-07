@@ -12,12 +12,23 @@ Production (single worker recommended — in-memory sessions are per process):
   gunicorn src.web.app:app -k uvicorn.workers.UvicornWorker -w 1 -b 0.0.0.0:8000 \\
     --timeout 300 --graceful-timeout 60 --access-logfile -
 
-For scale, prefer static replay bundles (frontend/data/replays/) + CDN; keep
+For scale, prefer static replay bundles (``<static>/data/replays/``) + CDN; keep
 API workers at 1 or use sticky sessions / external session store.
+
+Disk data (same search order as ``f1-web-local``)
+-----------------------------------------------
+``compressed_fastf1-cache/`` (under ``f1-web-server/`` repo root) — FastF1 stage-2 ``*.ff1pkl.xz``
+  (primary mirror; also ``backend/compressed_fastf1-cache`` is searched). Optional
+  ``COMPRESSED_FASTF1_CACHE_DIR`` for a custom root.
+
+``backend/compressed_computed_data/`` — LZMA telemetry pickles (``*.pkl.xz``; optional plain
+``.pkl`` in the same tree). Override base dir with ``settings.json`` → ``computed_data_location``.
 
 Environment (optional)
 ----------------------
-CORS_ORIGINS     Comma-separated list; if unset, CORS middleware is disabled (fine for same-origin).
+CORS_ORIGINS     Comma-separated allowed browser origins (e.g. your Vercel URL). If unset, common
+  local dev origins are allowed (Live Server :5500, Vite :5173) so ``fetch`` from another port works.
+  Set explicitly in production. Use CORS_ORIGINS=0 to disable CORS middleware entirely.
 SESSION_TTL_SECONDS   Idle time before a loaded session is dropped (default 86400).
   The client pings /meta periodically so playback from cache still refreshes TTL.
 MAX_STORED_SESSIONS   Cap concurrent stored sessions (default 48).
@@ -29,28 +40,29 @@ SERVE_FRONTEND   If 0/false/no, do not mount the static site folder (API + /data
 STATIC_SITE_DIR  Optional absolute path to the static site root (index.html, app.js, data/).
   If unset: use ``frontend/`` when present, else ``web/public/`` (same layout as f1-web-local).
 
-Cloudflare R2 (S3-compatible) — optional precomputed JSON under data/...
-R2_ACCOUNT_ID
-R2_ACCESS_KEY_ID
-R2_SECRET_ACCESS_KEY
-R2_BUCKET_NAME
-R2_KEY_PREFIX   Optional key prefix inside the bucket (no leading slash).
+FASTF1_CACHE_DIR   FastF1 live cache (default: user profile, same as local). Used with
+  ``compressed_fastf1-cache`` relpath lookup.
 
-DATA_SOURCE   ``local`` = only disk (``frontend/data``, ``compressed_computed_data``); ignore R2 even if
-  credentials are set. Omit or ``r2`` = use R2 when credentials exist. Alias: ``USE_LOCAL_DATA=1``.
+COMPRESSED_FASTF1_CACHE_DIR  Root folder containing the mirrored ``*.ff1pkl.xz`` tree (same layout as
+  under the live cache). Searched first for reads (not only writes).
 
-R2_ONLY_SERVER=1   Do not initialize FastF1 cache; serve /api/schedule, /api/default-year,
-  and POST /api/session/load only from R2 (upload data/schedule/*.json, default-year.json,
-  data/replays/<slug>/…). Requires R2 env vars.
+FASTF1_CACHE_IGNORE_VERSION  If 1/true/yes, load compressed/plain pickles even when their FastF1
+  API core version differs (may mis-parse old data; use after upgrading FastF1 until you recompress).
 
-SESSION_LOAD_FROM_R2=1   POST /api/session/load reads replay bundles from R2 only (no FastF1).
-  If the bundle is missing, returns 404. Schedule may still use FastF1 unless R2_ONLY_SERVER=1.
+PRECOMPUTED_REPLAY_LOAD_FASTF1_LAPS  Default 1: when serving from ``compressed_computed_data`` pickle,
+  still load FastF1 lap timing only (uses ``compressed_fastf1-cache``) for metadata/rotation — not car
+  telemetry. Set 0 to skip FastF1 entirely for that path (legacy).
 
-FASTF1_CACHE_DIR   Optional absolute path for FastF1 live cache (e.g. /tmp/fastf1-cache on servers).
+PRECOMPUTED_REPLAY_TRACK_TELEMETRY  Default 1: after lap-only load, also ``load(telemetry=True)`` so
+  track outline / DRS zones use dense FastF1 lap telemetry (cache-backed). Set 0 to build track from
+  replay frames only (lighter, rougher).
 
-FASTF1_DISK_CACHE  Set to 0/false/no to disable all FastF1 on-disk API cache (.ff1pkl / compressed_fastf1-cache);
-  FastF1 always fetches from the live timing API (no server-side file cache). Use with R2 for pickles/JSON
-  (``R2_COMPUTED_FIRST=1`` reads ``compressed_computed_data/*.pkl.xz`` from R2 in memory only).
+FASTF1_OFFLINE_ONLY  If 1/true/yes, never call the live API for FastF1 stage-2 cache misses — only
+  ``compressed_fastf1-cache`` (and legacy plain .ff1pkl). Requires disk cache enabled and a full mirror.
+
+STATIC_REPLAY_FALLBACK_AFTER_MISS  Default 1: if no ``data/replays/<slug>/`` on disk under the static
+  site, compute via FastF1 (``load_race_replay_payload``). Set to 0 to 404 instead.
+  Alias: ``FASTF1_FALLBACK_AFTER_R2_MISS`` (deprecated name, same behavior).
 
 Load ``backend/.env`` or repo-root ``.env`` when present (python-dotenv).
 """
@@ -69,7 +81,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -94,15 +106,13 @@ if str(_path_for_src) not in sys.path:
     sys.path.insert(0, str(_path_for_src))
 os.chdir(REPO_ROOT)
 
-from src.f1_data import enable_cache, get_race_weekends_by_year
-from src.lib.r2_replay_bundle import load_replay_bundle_from_r2, replay_slug
-from src.lib.r2_storage import (
-    r2_connection_status,
-    r2_credentials_configured,
-    r2_use_remote,
-    try_read_bytes_from_r2,
-)
+from src.f1_data import data_storage_paths, enable_cache, get_race_weekends_by_year
+
+# Before payload (session loads): enable FastF1 cache + compressed_fastf1-cache LZMA patch.
+enable_cache()
+
 from src.lib.season import get_season
+from src.lib.static_replay_bundle import load_static_replay_bundle, replay_slug
 from src.web.payload import load_race_replay_payload
 from src.web.session_store import SessionStore
 
@@ -137,25 +147,12 @@ _load_semaphore = threading.BoundedSemaphore(
 _MAX_FRAMES_PER_REQUEST = max(100, int(os.environ.get("MAX_FRAMES_PER_REQUEST", "1200")))
 
 
-def _env_bool(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
-
-
-def _r2_only_server() -> bool:
-    if not r2_use_remote():
-        return False
-    return _env_bool("R2_ONLY_SERVER")
-
-
-def _session_load_from_r2() -> bool:
-    if not r2_use_remote():
-        return False
-    return _env_bool("R2_ONLY_SERVER") or _env_bool("SESSION_LOAD_FROM_R2")
-
-
-def _fastf1_fallback_after_r2_miss() -> bool:
-    """If R2 has no bundle, call FastF1 (default). Set FASTF1_FALLBACK_AFTER_R2_MISS=0 to 404 instead."""
-    v = os.environ.get("FASTF1_FALLBACK_AFTER_R2_MISS", "1").strip().lower()
+def _static_replay_fallback_after_miss() -> bool:
+    """If no static replay folder, call FastF1 (default). Set STATIC_REPLAY_FALLBACK_AFTER_MISS=0 to 404."""
+    v = os.environ.get(
+        "STATIC_REPLAY_FALLBACK_AFTER_MISS",
+        os.environ.get("FASTF1_FALLBACK_AFTER_R2_MISS", "1"),
+    ).strip().lower()
     return v not in ("0", "false", "no")
 
 
@@ -168,8 +165,7 @@ def _parse_session_id(session_id: str) -> str:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    if not _r2_only_server():
-        enable_cache()
+    enable_cache()
     yield
     _session_store.clear()
 
@@ -183,11 +179,31 @@ if _th:
         allowed_hosts=[h.strip() for h in _th.split(",") if h.strip()],
     )
 
-_cors = os.environ.get("CORS_ORIGINS", "").strip()
-if _cors:
+def _cors_origins() -> list[str] | None:
+    """
+    Return allowed origins for CORSMiddleware, or None to skip the middleware.
+
+    Cross-origin fetches (e.g. Live Server on :5500 calling API on :8000) need explicit origins.
+    """
+    raw = os.environ.get("CORS_ORIGINS", "").strip()
+    if raw in ("0", "false", "no", "off"):
+        return None
+    if raw:
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    # Default: local dev frontends on a different port than the API
+    return [
+        "http://127.0.0.1:5500",
+        "http://localhost:5500",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    ]
+
+
+_cors_list = _cors_origins()
+if _cors_list is not None:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[o.strip() for o in _cors.split(",") if o.strip()],
+        allow_origins=_cors_list,
         allow_credentials=False,
         allow_methods=["GET", "POST", "HEAD", "OPTIONS"],
         allow_headers=["*"],
@@ -233,10 +249,19 @@ def health():
     return {"ok": True}
 
 
-@app.get("/api/health/r2")
-def health_r2():
-    """Verify R2 credentials and list a few keys (compare with example_meta_key_for_slug_*)."""
-    return r2_connection_status()
+@app.get("/api/health/data")
+def health_data():
+    """Resolved paths for telemetry pickles, FastF1 stage-2 LZMA cache, and static site root."""
+    ds = data_storage_paths()
+    return {
+        "ok": True,
+        "repo_root": str(REPO_ROOT),
+        "public_dir": str(PUBLIC_DIR),
+        "computed_data": ds["computed_data"],
+        "compressed_computed_data": ds["compressed_computed_data"],
+        "fastf1_live_cache": ds["fastf1_live_cache"],
+        "compressed_fastf1_cache_roots": ds["compressed_fastf1_cache_roots"],
+    }
 
 
 @app.get("/.well-known/appspecific/com.chrome.devtools.json")
@@ -247,10 +272,10 @@ def chrome_devtools_well_known():
 
 @app.get("/api/default-year")
 def default_year():
-    if _r2_only_server():
-        raw = try_read_bytes_from_r2("default-year.json")
-        if raw:
-            return json.loads(raw.decode("utf-8"))
+    path = PUBLIC_DIR / "data" / "default-year.json"
+    if path.is_file():
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
     return {"year": get_season()}
 
 
@@ -258,17 +283,10 @@ def default_year():
 def schedule(year: int):
     if year < 1950 or year > 2100:
         raise HTTPException(status_code=400, detail="year out of range")
-    if _r2_only_server():
-        raw = try_read_bytes_from_r2(f"schedule/{year}.json")
-        if not raw:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"Schedule not in R2 (data/schedule/{year}.json). "
-                    "Upload with the same layout as frontend/data/schedule/."
-                ),
-            )
-        return json.loads(raw.decode("utf-8"))
+    path = PUBLIC_DIR / "data" / "schedule" / f"{year}.json"
+    if path.is_file():
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
     try:
         weekends = get_race_weekends_by_year(year)
     except Exception as e:
@@ -288,46 +306,21 @@ def load_session_route(body: LoadSessionBody):
         )
     try:
         try:
-            if _session_load_from_r2():
-                payload = load_replay_bundle_from_r2(
-                    body.year,
-                    body.round,
-                    body.session_type,
-                )
-                if payload is None:
+            payload = load_static_replay_bundle(
+                PUBLIC_DIR, body.year, body.round, body.session_type
+            )
+            if payload is None:
+                if not _static_replay_fallback_after_miss():
                     raise HTTPException(
                         status_code=404,
                         detail=(
-                            "Replay bundle not found in R2 for this session. "
-                            "Upload data/replays/<slug>/meta.json and frames_*.json "
-                            "(export with scripts/export_static_replay.py and sync to R2). "
-                            "GET /api/health/r2 to verify keys match the expected key."
+                            "No static replay under "
+                            f"data/replays/{replay_slug(body.year, body.round, body.session_type)!r}/ "
+                            "(meta.json + frames_*.json). "
+                            "Export with scripts/export_static_replay.py, or set "
+                            "STATIC_REPLAY_FALLBACK_AFTER_MISS=1 to compute via FastF1."
                         ),
                     )
-            elif r2_credentials_configured():
-                payload = load_replay_bundle_from_r2(
-                    body.year,
-                    body.round,
-                    body.session_type,
-                )
-                if payload is None:
-                    if _fastf1_fallback_after_r2_miss():
-                        payload = load_race_replay_payload(
-                            body.year,
-                            body.round,
-                            body.session_type,
-                            include_race_events=True,
-                        )
-                    else:
-                        raise HTTPException(
-                            status_code=404,
-                            detail=(
-                                f"No replay in R2 for slug "
-                                f"{replay_slug(body.year, body.round, body.session_type)!r}. "
-                                "See GET /api/health/r2 for expected key layout."
-                            ),
-                        )
-            else:
                 payload = load_race_replay_payload(
                     body.year,
                     body.round,
@@ -435,15 +428,10 @@ def get_meta(session_id: str):
 
 
 def _load_static_replay_meta_json(slug: str) -> dict | None:
-    rel = f"replays/{slug}/meta.json"
-    if PUBLIC_DIR.is_dir():
-        path = PUBLIC_DIR / "data" / rel
-        if path.is_file():
-            with open(path, encoding="utf-8") as f:
-                return json.load(f)
-    raw = try_read_bytes_from_r2(rel)
-    if raw:
-        return json.loads(raw.decode("utf-8"))
+    path = PUBLIC_DIR / "data" / "replays" / slug / "meta.json"
+    if path.is_file():
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
     return None
 
 
@@ -462,21 +450,15 @@ def static_replay_meta(slug: str):
 
 @app.get("/data/{path:path}")
 def serve_data(path: str):
-    """Precomputed JSON bundles (local ``<static>/data`` or R2)."""
+    """Precomputed JSON under ``<static>/data`` (local files only)."""
     if path.startswith(("/", "\\")) or ".." in path:
         raise HTTPException(status_code=400, detail="Invalid path")
     rel = path.replace("\\", "/").strip("/")
     local = PUBLIC_DIR / "data" / rel
-    if local.is_file():
-        return FileResponse(local)
-    raw = try_read_bytes_from_r2(rel)
-    if raw is None:
+    if not local.is_file():
         raise HTTPException(status_code=404, detail="Not found")
     media, _ = mimetypes.guess_type(rel)
-    return Response(
-        content=raw,
-        media_type=media or "application/octet-stream",
-    )
+    return FileResponse(local, media_type=media or "application/octet-stream")
 
 
 _serve_fe = os.environ.get("SERVE_FRONTEND", "1").strip().lower() not in (

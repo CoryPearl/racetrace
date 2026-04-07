@@ -1,5 +1,7 @@
 """
-FastF1 stage-2 cache: **authoritative** store is ``<repo>/compressed_fastf1-cache/*.ff1pkl.xz``.
+FastF1 stage-2 cache: **authoritative** store is
+``<repo>/compressed_fastf1-cache/*.ff1pkl.xz`` — same layout as ``f1-web-local`` (also checks
+``backend/compressed_fastf1-cache`` for deploys). Override read/write root with ``COMPRESSED_FASTF1_CACHE_DIR`` (searched first for ``*.ff1pkl.xz``).
 
 - **Reads**: Prefer LZMA stream from ``.xz``; legacy plain ``.ff1pkl`` is migrated to ``.xz`` and
   then **deleted**.
@@ -17,6 +19,7 @@ import lzma
 import os
 import pickle
 import sys
+from pathlib import Path
 
 from src.lib.repo_paths import repo_root
 from src.lib.settings import default_fastf1_cache_user_path, get_settings
@@ -27,7 +30,39 @@ _logged_compressed_read = False
 _LZMA_PRESET = 3
 
 
+def _fastf1_offline_only() -> bool:
+    """
+    When True, never call FastF1 live API for stage-2 cache misses — only ``compressed_fastf1-cache``
+    (and legacy plain ``.ff1pkl``). Use when the machine has a full local mirror and must not
+    phone home. Set ``FASTF1_OFFLINE_ONLY=1``.
+    """
+    return os.environ.get("FASTF1_OFFLINE_ONLY", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _offline_or_live(func, api_path, func_kwargs, *, detail: str):
+    if _fastf1_offline_only():
+        raise RuntimeError(
+            "FASTF1_OFFLINE_ONLY is set but no usable compressed_fastf1-cache entry for this "
+            f"request ({detail}). Add the matching ``.ff1pkl.xz`` under compressed_fastf1-cache "
+            "or unset FASTF1_OFFLINE_ONLY."
+        )
+    return func(api_path, **func_kwargs)
+
+
+def _web_server_backend_root() -> str:
+    """``f1-web-server/backend`` (directory containing ``src/``)."""
+    return str(Path(__file__).resolve().parents[2])
+
+
 def _primary_compressed_root() -> str:
+    """Default write target for new ``.ff1pkl.xz`` (matches ``f1-web-local``)."""
+    env = (os.environ.get("COMPRESSED_FASTF1_CACHE_DIR") or "").strip()
+    if env:
+        return os.path.normpath(os.path.expanduser(env))
     return os.path.join(repo_root(), "compressed_fastf1-cache")
 
 
@@ -48,13 +83,21 @@ def compressed_fastf1_cache_dirs() -> list[str]:
     """
     Search roots for ``*.ff1pkl.xz`` (``scripts/compress_fastf1_cache.py`` output).
 
-    Includes ``compressed_fastf1-cache`` under the repo and next to the live FastF1 cache dir
-    (when ``cache_location`` points outside the repo).
+    First: ``COMPRESSED_FASTF1_CACHE_DIR`` if set, else ``<repo>/compressed_fastf1-cache``
+    (same as :func:`_primary_compressed_root` — must be searched for **reads**, not only writes).
+
+    Then: repo-level ``compressed_fastf1-cache``, ``backend/compressed_fastf1-cache``,
+    ``<parent-of-backend>/compressed_fastf1-cache``, then next to the live FastF1 cache dir.
     """
     cd = abs_fastf1_cache_dir()
     parent = os.path.dirname(cd) or repo_root()
+    backend_root = _web_server_backend_root()
     candidates = [
         _primary_compressed_root(),
+        os.path.join(repo_root(), "compressed_fastf1-cache"),
+        os.path.join(backend_root, "compressed_fastf1-cache"),
+        # e.g. f1-web-server/compressed_fastf1-cache next to backend/ (common deploy layout)
+        os.path.join(os.path.dirname(backend_root), "compressed_fastf1-cache"),
         os.path.join(parent, "compressed_fastf1-cache"),
     ]
     seen: set[str] = set()
@@ -70,6 +113,8 @@ def compressed_fastf1_cache_dirs() -> list[str]:
 def _find_xz_for_stage2_path(cache_file_path: str, cache_dir: str) -> str | None:
     """Return path to ``.ff1pkl.xz`` if present under a compressed root."""
     try:
+        cache_dir = os.path.realpath(os.path.expanduser(cache_dir))
+        cache_file_path = os.path.realpath(os.path.expanduser(cache_file_path))
         rel = os.path.relpath(cache_file_path, cache_dir)
     except ValueError:
         return None
@@ -229,8 +274,22 @@ def install_fastf1_compressed_cache_patch() -> None:
                                 pass
                         return cached["data"]
                     if cached is not None and not cls._data_ok_for_use(cached):
+                        fr._logger.warning(
+                            "compressed_fastf1-cache pickle rejected for %s (%s): "
+                            "cached version %r != API core %s — set "
+                            "FASTF1_CACHE_IGNORE_VERSION=1 to use anyway, or rebuild cache",
+                            func_name,
+                            xz_path,
+                            cached.get("version"),
+                            cls._API_CORE_VERSION,
+                        )
                         fr._logger.info(f"Updating cache for {func_name}...")
-                        data = func(api_path, **func_kwargs)
+                        data = _offline_or_live(
+                            func,
+                            api_path,
+                            func_kwargs,
+                            detail=f"{func_name} .ff1pkl.xz version mismatch: {xz_path}",
+                        )
                         if data is not None:
                             _patched_write_cache(cls, data, cache_file_path)
                             fr._logger.info("Cache updated!")
@@ -260,7 +319,12 @@ def install_fastf1_compressed_cache_patch() -> None:
                         return cached["data"]
                     if cached is not None and not cls._data_ok_for_use(cached):
                         fr._logger.info(f"Updating cache for {func_name}...")
-                        data = func(api_path, **func_kwargs)
+                        data = _offline_or_live(
+                            func,
+                            api_path,
+                            func_kwargs,
+                            detail=f"{func_name} plain .ff1pkl version mismatch: {cache_file_path}",
+                        )
                         if data is not None:
                             _patched_write_cache(cls, data, cache_file_path)
                             fr._logger.info("Cache updated!")
@@ -278,7 +342,12 @@ def install_fastf1_compressed_cache_patch() -> None:
                 fr._logger.info(
                     f"No cached data found for {func_name}. Loading data..."
                 )
-                data = func(api_path, **func_kwargs)
+                data = _offline_or_live(
+                    func,
+                    api_path,
+                    func_kwargs,
+                    detail=f"{func_name} miss: {cache_file_path}",
+                )
                 if data is not None:
                     _patched_write_cache(cls, data, cache_file_path)
                     fr._logger.info("Data has been written to cache!")
@@ -289,7 +358,12 @@ def install_fastf1_compressed_cache_patch() -> None:
             else:
                 if not cls._tmp_disabled:
                     cls._enable_default_cache()
-                return func(api_path, **func_kwargs)
+                return _offline_or_live(
+                    func,
+                    api_path,
+                    func_kwargs,
+                    detail=f"{func.__name__}: cache disabled or no _CACHE_DIR",
+                )
 
         return _cached_api_request
 

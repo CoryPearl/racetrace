@@ -1,7 +1,8 @@
-import io
+import json
 import lzma
 import os
 import pickle
+from pathlib import Path
 import sys
 import threading
 from datetime import timedelta, date
@@ -14,6 +15,7 @@ import pandas as pd
 
 from src.lib.fastf1_compressed_cache import (
     abs_fastf1_cache_dir,
+    compressed_fastf1_cache_dirs,
     install_fastf1_compressed_cache_patch,
 )
 from src.lib.repo_paths import repo_root
@@ -23,23 +25,21 @@ from src.lib.tyres import TYRE_EXPECTED_STINT_LAPS, get_tyre_compound_int
 
 
 def enable_cache():
+    """Same as ``f1-web-local``: enable FastF1 cache dir + LZMA stage-2 patch (always)."""
     cache_path = abs_fastf1_cache_dir()
     if not os.path.exists(cache_path):
         os.makedirs(cache_path)
     # Stage-2 API pickles only (incl. compressed_fastf1-cache patch). No requests-cache sqlite —
     # avoids fastf1_http_cache.sqlite contention and matches "no HTTP cache" workflow.
-    fastf1.Cache.enable_cache(cache_path, use_requests_cache=False)
-    # FASTF1_DISK_CACHE=0: never read/write FastF1 .ff1pkl or compressed_fastf1-cache on disk;
-    # each load hits the live API (use with R2 for pickles/JSON — see R2_COMPUTED_FIRST).
-    no_disk = os.environ.get("FASTF1_DISK_CACHE", "1").strip().lower() in (
-        "0",
-        "false",
-        "no",
+    ignore_v = os.environ.get("FASTF1_CACHE_IGNORE_VERSION", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
     )
-    if not no_disk:
-        install_fastf1_compressed_cache_patch()
-    if no_disk:
-        fastf1.Cache.set_disabled()
+    fastf1.Cache.enable_cache(
+        cache_path, use_requests_cache=False, ignore_version=ignore_v
+    )
+    install_fastf1_compressed_cache_patch()
 
 
 FPS = 25
@@ -51,28 +51,39 @@ def _f1_project_root() -> str:
     return repo_root()
 
 
+def _server_backend_root() -> str:
+    """``f1-web-server/backend`` (directory containing ``src/``)."""
+    return str(Path(__file__).resolve().parents[1])
+
+
 def _computed_data_dir() -> str:
     """Absolute path to configured computed_data directory."""
-    raw = (get_settings().computed_data_location or "computed_data").strip()
+    raw = (get_settings().computed_data_location or "compressed_computed_data").strip()
     if os.path.isabs(raw):
         return os.path.normpath(raw)
-    return os.path.normpath(os.path.join(_f1_project_root(), raw))
+    return os.path.normpath(os.path.join(_server_backend_root(), raw))
 
 
 def _compressed_computed_data_dirs() -> list[str]:
     """
-    Mirror trees from ``scripts/compress_pkl_cache.py`` (sibling of ``computed_data``).
+    Mirror trees from ``scripts/compress_pkl_cache.py``.
 
-    We try the sibling of the configured ``computed_data`` dir first, then the repo-root
-    ``compressed_computed_data`` as a fallback when settings point outside the project.
+    Primary: sibling of the configured base dir (often ``…/backend/compressed_computed_data`` when
+    ``computed_data_location`` is ``compressed_computed_data``). Then repo-root fallbacks for older
+    layouts (``computed_data`` + sibling, or legacy paths).
     """
+    root = _f1_project_root()
     primary_parent = os.path.dirname(_computed_data_dir())
     if not primary_parent:
-        primary_parent = _f1_project_root()
+        primary_parent = root
     out = [os.path.join(primary_parent, "compressed_computed_data")]
-    fallback = os.path.join(_f1_project_root(), "compressed_computed_data")
-    if os.path.normpath(fallback) not in map(os.path.normpath, out):
-        out.append(fallback)
+    for fb in (
+        os.path.join(root, "compressed_computed_data"),
+        os.path.join(root, "backend", "compressed_computed_data"),
+        os.path.join(_server_backend_root(), "compressed_computed_data"),
+    ):
+        if os.path.normpath(fb) not in map(os.path.normpath, out):
+            out.append(fb)
     return out
 
 
@@ -83,30 +94,6 @@ def _safe_computed_relative(relative_path: str) -> str:
     return rel
 
 
-def _try_load_computed_pickle_from_r2(rel: str):
-    """
-    Load ``compressed_computed_data/<rel>.xz`` from R2 into memory (LZMA + pickle).
-    Same bytes as local compressed tree; no temp files on disk.
-    """
-    if os.environ.get("R2_DISABLE_COMPUTED", "").strip().lower() in ("1", "true", "yes"):
-        return None
-    try:
-        from src.lib.r2_storage import (
-            r2_credentials_configured,
-            try_read_compressed_computed_xz_from_r2,
-        )
-    except ImportError:
-        return None
-    if not r2_credentials_configured():
-        return None
-    raw = try_read_compressed_computed_xz_from_r2(rel)
-    if not raw:
-        return None
-    print(f"Loaded LZMA-compressed cache from R2 (in-memory): {rel}.xz")
-    with lzma.open(io.BytesIO(raw), "rb") as f:
-        return pickle.load(f)
-
-
 def load_computed_pickle(relative_path: str):
     """
     Load a pickle from ``computed_data/<relative_path>`` if present.
@@ -114,20 +101,8 @@ def load_computed_pickle(relative_path: str):
     Otherwise load from ``compressed_computed_data/<relative_path>.xz`` (LZMA), the layout
     produced by ``scripts/compress_pkl_cache.py``. Decompression is streamed via ``lzma.open`` — no
     temporary uncompressed file is written to disk.
-
-    If R2 credentials are set, also tries the same key under the bucket:
-    ``compressed_computed_data/<relative_path>.xz`` (optional ``R2_KEY_PREFIX``).
-
-    Set ``R2_COMPUTED_FIRST=1`` to try R2 before local paths (useful when the server has no local
-    cache). Default: local first, then R2.
     """
     rel = _safe_computed_relative(relative_path)
-    r2_first = os.environ.get("R2_COMPUTED_FIRST", "").strip().lower() in ("1", "true", "yes")
-
-    if r2_first:
-        hit = _try_load_computed_pickle_from_r2(rel)
-        if hit is not None:
-            return hit
 
     plain = os.path.join(_computed_data_dir(), rel)
     tried = [plain]
@@ -143,27 +118,22 @@ def load_computed_pickle(relative_path: str):
             with lzma.open(xz_path, "rb") as f:
                 return pickle.load(f)
 
-    if not r2_first:
-        hit = _try_load_computed_pickle_from_r2(rel)
-        if hit is not None:
-            return hit
-
-    r2_key = ""
-    try:
-        from src.lib.r2_storage import (
-            r2_credentials_configured,
-            r2_object_key_for_compressed_computed_xz,
-        )
-
-        if r2_credentials_configured():
-            r2_key = r2_object_key_for_compressed_computed_xz(rel)
-    except Exception:
-        pass
-    extra = f"; R2 object key: {r2_key}" if r2_key else ""
     raise FileNotFoundError(
-        f"No pickle or .xz for {rel!r}; tried: {tried!r}{extra} "
+        f"No pickle or .xz for {rel!r}; tried: {tried!r} "
         f"(project root {_f1_project_root()!r})"
     )
+
+
+def data_storage_paths() -> dict:
+    """Resolved disk paths for health checks and ops (repo-relative defaults under ``backend/``)."""
+    return {
+        "computed_data": _computed_data_dir(),
+        "compressed_computed_data": _compressed_computed_data_dirs(),
+        # Live FastF1 tree (empty dirs + paths FastF1 uses for relpath → .ff1pkl.xz lookup)
+        "fastf1_live_cache": abs_fastf1_cache_dir(),
+        # LZMA stage-2 mirrors searched by the compressed-cache patch (in order)
+        "compressed_fastf1_cache_roots": compressed_fastf1_cache_dirs(),
+    }
 
 
 def _computed_telemetry_pkl_candidates(session, cache_suffix: str) -> list[str]:
@@ -202,6 +172,70 @@ def _computed_telemetry_pkl_candidates(session, cache_suffix: str) -> list[str]:
     except Exception:
         pass
 
+    return out
+
+
+def _computed_telemetry_pkl_candidates_from_schedule(
+    year: int,
+    round_number: int,
+    session_type: str,
+    cache_suffix: str,
+) -> list[str]:
+    """
+    Telemetry pickle basenames **without** ``session.load()`` — uses static
+    ``frontend/data/schedule/{year}.json`` so ``compressed_computed_data/`` can
+    resolve **before** any FastF1 livetiming API (matches keys like
+    ``2025_Season_Round_1:_…_*_race_telemetry.pkl`` that need ``session.event``).
+    """
+    schedule_path = None
+    for sub in (
+        ("frontend", "data", "schedule"),
+        ("web", "public", "data", "schedule"),
+    ):
+        p = os.path.join(_f1_project_root(), *sub, f"{year}.json")
+        if os.path.isfile(p):
+            schedule_path = p
+            break
+    if not schedule_path:
+        return []
+    try:
+        with open(schedule_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    events = data.get("events") if isinstance(data, dict) else None
+    if not isinstance(events, list):
+        return []
+    ev = None
+    for e in events:
+        if isinstance(e, dict) and int(e.get("round_number", -1)) == int(round_number):
+            ev = e
+            break
+    if ev is None:
+        return []
+    en = str(ev.get("event_name", "") or "").replace(" ", "_")
+    if not en:
+        return []
+    sn = {"R": "Race", "S": "Sprint", "Q": "Qualifying"}.get(session_type, "Race")
+    y = int(year)
+    r = int(round_number)
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def add(rel: str) -> None:
+        rel = rel.replace(os.sep, "/")
+        if rel in seen:
+            return
+        seen.add(rel)
+        out.append(rel)
+
+    # Mirrors ``str(session).replace(" ", "_")`` and _computed_telemetry_pkl_candidates.
+    add(f"{y}_Season_Round_{r}:_{en}_-_{sn}_{cache_suffix}_telemetry.pkl")
+    add(f"{y}_Season_Round_{r}_{en}_{sn}_{cache_suffix}_telemetry.pkl")
+    add(f"{en}_{cache_suffix}_telemetry.pkl")
+    add(f"{y}_R{r}_{en}_{cache_suffix}_telemetry.pkl")
+    add(f"{y}_r{r:02d}_{en}_{cache_suffix}_telemetry.pkl")
+    add(f"{y}_Season_Round_{r}_{en}_{sn}_{cache_suffix}_telemetry.pkl")
     return out
 
 
@@ -488,6 +522,7 @@ def _process_single_driver(args):
 
 def load_session(year, round_number, session_type="R"):
     # session_type: 'R' (Race), 'S' (Sprint) etc.
+    enable_cache()
     session = fastf1.get_session(year, round_number, session_type)
     session.load(laps=True, telemetry=True, weather=True)
     # If lap timing fails, FastF1 logs "Failed to load timing data!" and swallows
@@ -500,6 +535,37 @@ def load_session(year, round_number, session_type="R"):
             "the underlying exception, or retry when the API data is available."
         )
     return session
+
+
+def load_session_laps_only(year, round_number, session_type="R"):
+    """
+    Lap timing and session status only — no per-sample car telemetry.
+
+    Used when replay frames already come from a precomputed pickle: loads timing from
+    FastF1 stage-2 cache (``compressed_fastf1-cache`` / ``*.ff1pkl.xz``) without the heavy
+    ``_load_telemetry`` path. Enough for session metadata, driver list, and circuit rotation.
+    """
+    enable_cache()
+    session = fastf1.get_session(year, round_number, session_type)
+    session.load(laps=True, telemetry=False, weather=False, messages=False)
+    if session.f1_api_support and not hasattr(session, "_laps"):
+        raise RuntimeError(
+            "FastF1 did not load lap timing for this session (see log line "
+            "'Failed to load timing data!' above). Set FASTF1_DEBUG=1 to see "
+            "the underlying exception, or retry when the API data is available."
+        )
+    return session
+
+
+def load_telemetry_onto_session(session) -> None:
+    """
+    After :func:`load_session_laps_only`, load car/position telemetry (stage-2 cache / API).
+
+    FastF1 requires laps before telemetry. Used so ``Lap.get_telemetry()`` has dense samples and
+    DRS for track geometry — without repeating lap loading.
+    """
+    enable_cache()
+    session.load(laps=False, telemetry=True, weather=False, messages=False)
 
 
 def _fork_pool_map(map_fn, tasks):
