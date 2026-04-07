@@ -19,6 +19,9 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 /** Skips ngrok browser warning on tunneled asset/API responses. */
 const _NGROK_FETCH_INIT = { headers: { 'ngrok-skip-browser-warning': 'true' } };
 
+/** Extra degrees on top of FastF1 `circuit_rotation` — must match app.js CIRCUIT_ROTATION_OFFSET_DEG. */
+const CIRCUIT_ROTATION_OFFSET_DEG = 180;
+
 /** Start/finish segment from payload, or from centerline start (same logic as 2D `app.js`). */
 function finishLineFromTrack(track) {
   if (track.finish_line?.start && track.finish_line?.end) return track.finish_line;
@@ -1801,7 +1804,9 @@ export function createTrackView3D(wrapEl) {
     const b = track.bounds;
     cx = (b.x_min + b.x_max) / 2;
     cy = (b.y_min + b.y_max) / 2;
-    rotRad = ((meta.circuit_rotation || 0) * Math.PI) / 180;
+    rotRad =
+      (((meta.circuit_rotation || 0) + CIRCUIT_ROTATION_OFFSET_DEG) * Math.PI) /
+      180;
 
     const w = Math.max(1, b.x_max - b.x_min);
     const h = Math.max(1, b.y_max - b.y_min);

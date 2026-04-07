@@ -197,7 +197,10 @@ const ctx = canvas.getContext('2d');
  * Bump this when editing view3d.js so `import()` uses a new URL (separate module cache entry).
  * Server also sends Cache-Control: no-cache for .js — restart uvicorn after changing app.py.
  */
-const VIEW3D_MODULE_VER = '103';
+const VIEW3D_MODULE_VER = '104';
+
+/** Extra degrees on top of FastF1 `circuit_rotation` for 2D map — keep in sync with view3d.js. */
+const CIRCUIT_ROTATION_OFFSET_DEG = 180;
 
 /** @type {Awaited<ReturnType<typeof import('./view3d.js').createTrackView3D>> | null} */
 let trackView3d = null;
@@ -1335,7 +1338,8 @@ function drawFrame() {
   }
 
   const track = sessionMeta.track;
-  const circuitRotation = sessionMeta.circuit_rotation || 0;
+  const circuitRotation =
+    (sessionMeta.circuit_rotation || 0) + CIRCUIT_ROTATION_OFFSET_DEG;
   /** @type {ReturnType<typeof computeTransform> | null} */
   let T = null;
   if (!view3d) {
