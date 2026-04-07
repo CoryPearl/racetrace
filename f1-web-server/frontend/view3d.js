@@ -1114,7 +1114,8 @@ export function createTrackView3D(wrapEl) {
   /** Telemetry (x,y) → Three.js (x, y-up, z) with same rotation as 2D map */
   function toThreeVec(xw, yw) {
     const [rx, ry] = rotateWorld(xw, yw);
-    return new THREE.Vector3(rx, 0, ry);
+    /* Match 2D worldToScreen Y flip (canvas Y down vs world Y up). */
+    return new THREE.Vector3(rx, 0, -ry);
   }
 
   /**

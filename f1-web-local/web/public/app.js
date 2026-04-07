@@ -197,7 +197,7 @@ const ctx = canvas.getContext('2d');
  * Bump this when editing view3d.js so `import()` uses a new URL (separate module cache entry).
  * Server also sends Cache-Control: no-cache for .js — restart uvicorn after changing app.py.
  */
-const VIEW3D_MODULE_VER = '102';
+const VIEW3D_MODULE_VER = '103';
 
 /** @type {Awaited<ReturnType<typeof import('./view3d.js').createTrackView3D>> | null} */
 let trackView3d = null;
@@ -679,7 +679,10 @@ function worldToScreen(xw, yw, T) {
   const ty = yw - T.cy;
   const rx = tx * T.cos - ty * T.sin + T.cx;
   const ry = tx * T.sin + ty * T.cos + T.cy;
-  return [T.scale * rx + T.tx, T.scale * ry + T.ty];
+  const sx = T.scale * rx + T.tx;
+  const sy = T.scale * ry + T.ty;
+  /* World Y is up (FastF1); canvas Y is down — flip so the map matches geographic sense. */
+  return [sx, T.screenH - sy];
 }
 
 function drawPolyline(xs, ys, rgb, lineWidth, T) {
@@ -2063,7 +2066,7 @@ async function loadSelectedSession(initialFrame) {
       source = 'static';
       showLoading('Loading replay bundle…');
     } else {
-      showLoading('Loading session (about 20 seconds)…');
+      showLoading('Loading session (about 30 seconds)…');
       const body = { year, round, session_type: st };
       data = await apiJson('/api/session/load', {
         method: 'POST',
