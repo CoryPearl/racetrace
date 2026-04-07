@@ -29,6 +29,7 @@ TRUSTED_HOSTS    Comma-separated Host values (e.g. example.com,*.example.com) or
 
 from __future__ import annotations
 
+import gc
 import json
 import os
 import re
@@ -103,7 +104,8 @@ if _cors:
         CORSMiddleware,
         allow_origins=[o.strip() for o in _cors.split(",") if o.strip()],
         allow_credentials=False,
-        allow_methods=["GET", "POST", "HEAD", "OPTIONS"],
+        # DELETE: client releases /api/session/{id} cross-origin to free RAM.
+        allow_methods=["GET", "POST", "HEAD", "OPTIONS", "DELETE"],
         allow_headers=["*"],
         max_age=600,
     )
@@ -242,6 +244,7 @@ def delete_session_route(session_id: str):
     sid = _parse_session_id(session_id)
     if not _session_store.delete(sid):
         raise HTTPException(status_code=404, detail="Unknown or expired session")
+    gc.collect()
     return {"ok": True}
 
 

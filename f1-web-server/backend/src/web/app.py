@@ -70,6 +70,7 @@ Load ``backend/.env`` or repo-root ``.env`` when present (python-dotenv).
 
 from __future__ import annotations
 
+import gc
 import json
 import mimetypes
 import os
@@ -206,7 +207,8 @@ if _cors_list is not None:
         CORSMiddleware,
         allow_origins=_cors_list,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "HEAD", "OPTIONS"],
+        # Must include DELETE: the client releases /api/session/{id} cross-origin to free RAM.
+        allow_methods=["GET", "POST", "HEAD", "OPTIONS", "DELETE"],
         allow_headers=["*"],
         max_age=600,
     )
@@ -386,6 +388,7 @@ def delete_session_route(session_id: str):
     sid = _parse_session_id(session_id)
     if not _session_store.delete(sid):
         raise HTTPException(status_code=404, detail="Unknown or expired session")
+    gc.collect()
     return {"ok": True}
 
 

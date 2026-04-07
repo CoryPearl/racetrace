@@ -789,13 +789,16 @@ function isStaticSessionId(id) {
   return typeof id === 'string' && id.startsWith('static:');
 }
 
-/** Free server-side frame buffers for this UUID (no-op for static bundle sessions). */
-function releaseServerSession(sid) {
+/**
+ * Free server-side frame buffers for this UUID (no-op for static bundle sessions).
+ * @param {{ keepalive?: boolean }} [opts] Use keepalive on pagehide — the browser may cancel a normal fetch during unload.
+ */
+async function releaseServerSession(sid, opts = {}) {
   if (!sid || isStaticSessionId(sid)) return;
   const url = apiUrl(`/api/session/${encodeURIComponent(sid)}`);
   const init = defaultFetchInit({ method: 'DELETE' });
   try {
-    void fetch(url, { ...init, keepalive: true });
+    await fetch(url, { ...init, keepalive: Boolean(opts.keepalive) });
   } catch {
     /* ignore */
   }
@@ -2057,7 +2060,7 @@ async function loadSelectedSession(initialFrame) {
   lbList.innerHTML = '';
   hideScrubHoverTip();
   sessionId = null;
-  releaseServerSession(previousServerSessionId);
+  await releaseServerSession(previousServerSessionId);
   sessionMeta = null;
   selectedDriverCode = null;
   autoPickLeaderDone = false;
@@ -2496,7 +2499,7 @@ async function init() {
   }
 
   window.addEventListener('pagehide', () => {
-    releaseServerSession(sessionId);
+    void releaseServerSession(sessionId, { keepalive: true });
   });
 
   requestAnimationFrame(loop);
