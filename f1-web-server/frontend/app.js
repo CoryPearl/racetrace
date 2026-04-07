@@ -2063,7 +2063,7 @@ async function loadSelectedSession(initialFrame) {
       source = 'static';
       showLoading('Loading replay bundle…');
     } else {
-      showLoading('Loading session (about 20 seconds)…');
+      showLoading('Loading session (about 30 seconds)…');
       const body = { year, round, session_type: st };
       data = await apiJson('/api/session/load', {
         method: 'POST',

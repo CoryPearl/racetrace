@@ -1,4 +1,6 @@
-# F1 Race Replay (web)
+# F1 Race Replay (web and 3d!)
+
+Live site: [https://racetrace-beta.vercel.app/](https://racetrace-beta.vercel.app/)
 
 This project is a **browser-based** Formula 1 session replay and telemetry viewer. You load a race weekend session and watch cars move on the track with timing, tyres, and playback controls—similar in spirit to a live broadcast replay, but driven by [FastF1](https://theoehrly.github.io/Fast-F1/) data and optional precomputed telemetry. The stack here is a **FastAPI** backend and a **static JavaScript** front end (no desktop game engine).
 
@@ -10,8 +12,17 @@ The repo contains two related layouts: a single-folder **local** bundle ([`f1-we
 
 This work is inspired by and builds on **[f1-race-replay](https://github.com/IAmTomShaw/f1-race-replay)** by [Tom Shaw](https://github.com/IAmTomShaw) — an interactive Formula 1 race visualisation and data analysis tool built in Python with an Arcade-based viewer. That project is MIT-licensed and documents telemetry, Safety Car behaviour, qualifying support, and more on [its README](https://github.com/IAmTomShaw/f1-race-replay). This repository is a **separate web implementation**; attribution and thanks to the original authors and contributors there.
 
+Also the 3d models were taken form various free downloads on the internet I did not make them.
+
 ---
 
 ## Data
 
 Telemetry and championship content are subject to Formula 1 and FastF1 terms of use. This code is a viewer layer on top of those sources.
+
+---
+
+## Known issues
+
+- Jerky movement
+- Gui missalignment in driver view
