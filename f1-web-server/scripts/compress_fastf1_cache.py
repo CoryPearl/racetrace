@@ -12,7 +12,7 @@ By default this script only compresses files under **Race**, **Qualifying**, and
 folders (including ``Sprint_Qualifying``, ``Sprint_Shootout``, etc.). Practice and
 other sessions are skipped so you can shrink the archive without losing replay-critical data.
 
-Output mirrors ``compress_pkl_cache.py``::
+Output mirrors ``compress_pkl_cache.py`` (same as ``f1-web-local``: ``<project>/compressed_fastf1-cache/``)::
 
     <live cache>/.../timing_data.ff1pkl
         -> compressed_fastf1-cache/.../timing_data.ff1pkl.xz
@@ -41,7 +41,12 @@ _SESS_DIR = re.compile(r"^\d{4}-\d{2}-\d{2}_(.+)$")
 
 
 def _resolve_fastf1_cache_src(_base: Path) -> Path:
-    """Same directory as the running app (``abs_fastf1_cache_dir()``)."""
+    """Plain ``*.ff1pkl`` source tree (same defaults as ``f1-web-local`` / ``abs_fastf1_cache_dir``)."""
+    env = (os.environ.get("FASTF1_CACHE_DIR") or "").strip()
+    if env:
+        p = Path(os.path.expanduser(env))
+        if "compressed_fastf1-cache" not in p.parts:
+            return p
     try:
         from src.lib.fastf1_compressed_cache import abs_fastf1_cache_dir
 

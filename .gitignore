@@ -1,7 +1,11 @@
 .DS_Store
-compressed_fastf1-cache/
+f1-web-local/compressed_fastf1-cache/
 computed_data/
-compressed_computed_data/
+f1-web-server/compressed_fastf1-cache/
+f1-web-server/backend/compressed_fastf1-cache/
+f1-web-server/backend/compressed_computed_data/
+f1-web-server/backend/computed_data/
+f1-web-local/compressed_computed_data/
 # Static replay JSON (scripts/export_static_replay.py); often large
 f1-web-server/frontend/data/replays/**/*.json
 f1-web-local/web/public/data/replays/**/*.json

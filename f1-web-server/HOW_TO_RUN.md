@@ -25,12 +25,12 @@ export PYTHONPATH="$(pwd)/backend"
 python3 -m uvicorn src.web.app:app --host 127.0.0.1 --port 8000
 ```
 
-For production (many users), prefer **gunicorn** with a single worker unless you add sticky sessions or external session storage — see the module docstring in `backend/src/web/app.py` and comments in `run.sh`. Copy `backend/.env.example` to `backend/.env` and set **Cloudflare R2** credentials if the API should read precomputed JSON from R2 instead of (or in addition to) local `frontend/data/`.
+For production (many users), prefer **gunicorn** with a single worker unless you add sticky sessions or external session storage — see the module docstring in `backend/src/web/app.py` and comments in `run.sh`. Copy `backend/.env.example` to `backend/.env` as needed. Precomputed JSON lives under `frontend/data/` (schedule, replays); telemetry caches live under `backend/` — see `GET /api/health/data`.
 
 ## Caches (created at runtime; not shipped in the repo)
 
-- **FastF1 live cache** — Default is under your user cache (macOS: `~/Library/Caches/f1-race-replay/fastf1`). Override with `cache_location` in `~/.config/f1-race-replay/settings.json` (absolute path, or a path relative to the repo if you use a custom layout). **Stage-2** API pickles can be read from the repo’s **`compressed_fastf1-cache/`** (LZMA) without duplicating plain `.ff1pkl` files next to the live cache.
-- **`computed_data/`** — Precomputed telemetry pickles (optional; speeds up loads). You can copy an existing tree if you want.
+- **FastF1 `compressed_fastf1-cache`** — Same behavior as **`f1-web-local`**: put `*.ff1pkl.xz` under **`f1-web-server/compressed_fastf1-cache/`** (repo root, next to `backend/`). The API also checks **`backend/compressed_fastf1-cache/`**. Live FastF1 cache defaults to your **user profile** (like local); use `FASTF1_CACHE_DIR` only if you need a custom path. See `GET /api/health/data` → `compressed_fastf1_cache_roots`.
+- **`backend/compressed_computed_data/`** — Precomputed telemetry (`.pkl.xz` from `scripts/compress_pkl_cache.py`; optional plain `.pkl` here too). Override base dir in `settings.json` → `computed_data_location` if you use the classic **`computed_data/`** + **`compressed_computed_data/`** sibling layout instead.
 
 ## Client-side replay bundles (no server-side session memory)
 

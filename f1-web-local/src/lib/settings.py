@@ -37,7 +37,8 @@ class SettingsManager:
     DEFAULTS = {
         # Empty: use default_fastf1_cache_user_path() (see abs_fastf1_cache_dir in fastf1_compressed_cache).
         "cache_location": "",
-        "computed_data_location": "computed_data",
+        # Relative to ``f1-web-local/`` — same tree as ``f1-web-server/backend/compressed_computed_data``.
+        "computed_data_location": "../f1-web-server/backend/compressed_computed_data",
     }
 
     _instance: Optional["SettingsManager"] = None

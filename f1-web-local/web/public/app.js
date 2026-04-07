@@ -4,6 +4,40 @@
 
 const FPS = 25;
 const PLAYBACK_SPEEDS = [0.1, 0.2, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256];
+
+/**
+ * Backend origin for `/api/*` only (see config.js).
+ * `/data/*` JSON (schedule, default-year, static replay chunks) is served from the
+ * same origin as this page — e.g. Vercel `frontend/data/` — not from the API host.
+ */
+function apiUrl(path) {
+  if (/^https?:\/\//i.test(path)) return path;
+  const p = path.startsWith('/') ? path : `/${path}`;
+  if (p.startsWith('/data/')) return p;
+  const base =
+    typeof window !== 'undefined' && window.__API_BASE__ != null
+      ? String(window.__API_BASE__).replace(/\/$/, '')
+      : '';
+  return base ? `${base}${p}` : p;
+}
+
+/** Merge ngrok header into fetch init (skips interstitial on tunneled API responses). */
+function defaultFetchInit(init) {
+  const ngrok = { 'ngrok-skip-browser-warning': 'true' };
+  if (init == null || typeof init !== 'object') {
+    return { headers: { ...ngrok } };
+  }
+  const merged = { ...init };
+  if (init.headers instanceof Headers) {
+    const h = new Headers(init.headers);
+    h.set('ngrok-skip-browser-warning', 'true');
+    merged.headers = h;
+  } else {
+    merged.headers = { ...ngrok, ...(init.headers || {}) };
+  }
+  return merged;
+}
+
 const CHUNK_SIZE = 600;
 /** How many chunk files to warm ahead of the playhead (scaled by playback speed). */
 const PREFETCH_MIN_CHUNKS_AHEAD = 2;
@@ -163,7 +197,7 @@ const ctx = canvas.getContext('2d');
  * Bump this when editing view3d.js so `import()` uses a new URL (separate module cache entry).
  * Server also sends Cache-Control: no-cache for .js — restart uvicorn after changing app.py.
  */
-const VIEW3D_MODULE_VER = '100';
+const VIEW3D_MODULE_VER = '102';
 
 /** @type {Awaited<ReturnType<typeof import('./view3d.js').createTrackView3D>> | null} */
 let trackView3d = null;
@@ -290,9 +324,6 @@ let autoPickLeaderDone = false;
 
 let lastReplayHashSyncMs = 0;
 
-/** @type {string | null} */
-let lastDriverPovTuneSlug = null;
-
 /**
  * Same ordering as the sidebar leaderboard (stable sort on position; missing → 99).
  * @param {Record<string, any>} drivers
@@ -342,11 +373,6 @@ function sync3dCanvasHint() {
   if (cameraModeWrap) {
     cameraModeWrap.hidden = !seen || !in3d || !sessionId;
   }
-  const driverPovTuneWrap = document.getElementById('driver-pov-tune-wrap');
-  if (driverPovTuneWrap) {
-    const driver = cameraModeSelect?.value === 'driver_pov';
-    driverPovTuneWrap.hidden = !seen || !in3d || !sessionId || !driver;
-  }
   set3dHintText();
 }
 
@@ -372,7 +398,7 @@ function hideLoading() {
 }
 
 async function apiJson(url, opts) {
-  const r = await fetch(url, opts);
+  const r = await fetch(apiUrl(url), defaultFetchInit(opts));
   if (!r.ok) {
     const t = await r.text();
     throw new Error(t || r.statusText);
@@ -382,7 +408,7 @@ async function apiJson(url, opts) {
 
 /** GET JSON when status is ok; otherwise null (404 / missing file — no throw). */
 async function fetchJsonIfOk(url) {
-  const r = await fetch(url);
+  const r = await fetch(apiUrl(url), defaultFetchInit());
   if (!r.ok) return null;
   try {
     return await r.json();
@@ -401,7 +427,7 @@ async function loadScheduleForYear(year) {
     return data;
   }
   throw new Error(
-    `Missing web/public/data/schedule/${year}.json — run: PYTHONPATH=. python3 scripts/export_year_schedule.py --year ${year}`,
+    `Missing frontend/data/schedule/${year}.json — run: PYTHONPATH=backend python3 scripts/export_year_schedule.py --year ${year}`,
   );
 }
 
@@ -525,97 +551,6 @@ async function ensureTrackView3d() {
   }
   trackView3d = await trackView3dPromise;
   return trackView3d;
-}
-
-function updateDriverPovTuneValueLabels() {
-  const x = document.getElementById('driver-pov-tune-x');
-  const xv = document.getElementById('driver-pov-tune-x-val');
-  if (x && xv) xv.textContent = Number(x.value).toFixed(3);
-  const y = document.getElementById('driver-pov-tune-y');
-  const yv = document.getElementById('driver-pov-tune-y-val');
-  if (y && yv) yv.textContent = Number(y.value).toFixed(3);
-  const z = document.getElementById('driver-pov-tune-z');
-  const zv = document.getElementById('driver-pov-tune-z-val');
-  if (z && zv) zv.textContent = Number(z.value).toFixed(3);
-  const ld = document.getElementById('driver-pov-tune-lookdown');
-  const ldv = document.getElementById('driver-pov-tune-lookdown-val');
-  if (ld && ldv) ldv.textContent = Number(ld.value).toFixed(2);
-  const ldist = document.getElementById('driver-pov-tune-lookdist');
-  const ldistv = document.getElementById('driver-pov-tune-lookdist-val');
-  if (ldist && ldistv) ldistv.textContent = Number(ldist.value).toFixed(2);
-  const fov = document.getElementById('driver-pov-tune-fov');
-  const fovv = document.getElementById('driver-pov-tune-fov-val');
-  if (fov && fovv) fovv.textContent = `${Number(fov.value).toFixed(0)}°`;
-}
-
-function syncDriverPovTuneSlidersFromView3d() {
-  void ensureTrackView3d().then((v) => {
-    const t = v.getDriverPovTune();
-    const set = (id, val) => {
-      const el = document.getElementById(id);
-      if (el) el.value = String(val);
-    };
-    set('driver-pov-tune-x', t.offsetX);
-    set('driver-pov-tune-y', t.offsetY);
-    set('driver-pov-tune-z', t.offsetZ);
-    set('driver-pov-tune-lookdown', t.lookDownMul);
-    set('driver-pov-tune-lookdist', t.lookDistMul);
-    set('driver-pov-tune-fov', t.fov);
-    updateDriverPovTuneValueLabels();
-    const slugEl = document.getElementById('driver-pov-tune-team-slug');
-    if (slugEl && typeof v.getDriverPovTuneTeamSlug === 'function') {
-      const slug = v.getDriverPovTuneTeamSlug();
-      slugEl.textContent =
-        slug && slug !== '__fallback__' ? `Current model: ${slug}` : '';
-    }
-  });
-}
-
-function bindDriverPovTuneControls() {
-  const ids = [
-    'driver-pov-tune-x',
-    'driver-pov-tune-y',
-    'driver-pov-tune-z',
-    'driver-pov-tune-lookdown',
-    'driver-pov-tune-lookdist',
-    'driver-pov-tune-fov',
-  ];
-  const apply = () => {
-    void ensureTrackView3d().then((v) => {
-      v.setDriverPovTune({
-        offsetX: parseFloat(
-          document.getElementById('driver-pov-tune-x')?.value ?? '0',
-        ),
-        offsetY: parseFloat(
-          document.getElementById('driver-pov-tune-y')?.value ?? '0',
-        ),
-        offsetZ: parseFloat(
-          document.getElementById('driver-pov-tune-z')?.value ?? '0',
-        ),
-        lookDownMul: parseFloat(
-          document.getElementById('driver-pov-tune-lookdown')?.value ?? '1',
-        ),
-        lookDistMul: parseFloat(
-          document.getElementById('driver-pov-tune-lookdist')?.value ?? '1',
-        ),
-        fov: parseFloat(
-          document.getElementById('driver-pov-tune-fov')?.value ?? '54',
-        ),
-      });
-      updateDriverPovTuneValueLabels();
-    });
-  };
-  for (const id of ids) {
-    document.getElementById(id)?.addEventListener('input', apply);
-  }
-  document
-    .getElementById('driver-pov-tune-reset')
-    ?.addEventListener('click', () => {
-      void ensureTrackView3d().then((v) => {
-        v.resetDriverPovTune();
-        syncDriverPovTuneSlidersFromView3d();
-      });
-    });
 }
 
 function resizeTrackViews() {
@@ -1079,7 +1014,6 @@ function handleSessionGone() {
   hideScrubHoverTip();
   selectedDriverCode = null;
   autoPickLeaderDone = false;
-  lastDriverPovTuneSlug = null;
   if (sessionBanner) sessionBanner.hidden = true;
   if (loadStatus) {
     loadStatus.classList.remove('load-status--ready');
@@ -1119,7 +1053,7 @@ async function ensureChunkForFrame(idx) {
       if (isStaticSessionId(sessionId)) {
         const slug = sessionId.slice('static:'.length);
         url = `/data/replays/${encodeURIComponent(slug)}/frames_${start}.json`;
-        const r = await fetch(url);
+        const r = await fetch(apiUrl(url), defaultFetchInit());
         if (!r.ok) {
           throw new Error(`Static chunk ${start}: ${r.status}`);
         }
@@ -1127,7 +1061,7 @@ async function ensureChunkForFrame(idx) {
         chunkCache.set(start, j.frames);
       } else {
         url = `/api/session/${encodeURIComponent(sessionId)}/frames?start=${start}&end=${start + CHUNK_SIZE}`;
-        const r = await fetch(url);
+        const r = await fetch(apiUrl(url), defaultFetchInit());
         if (r.status === 404) {
           handleSessionGone();
           throw new Error('Session no longer on server.');
@@ -1432,25 +1366,12 @@ function drawFrame() {
   const leaderCode = leaderCodeFromFrame(frame);
 
   if (view3d) {
-    if (cameraModeSelect?.value !== 'driver_pov') {
-      lastDriverPovTuneSlug = null;
-    }
     if (trackView3d) {
       if (metaBuiltFor3d !== sessionMeta) {
         trackView3d.rebuildTrack(sessionMeta);
         metaBuiltFor3d = sessionMeta;
       }
       trackView3d.updateFrame(frame, colors, leaderCode, selectedKey);
-      if (
-        cameraModeSelect?.value === 'driver_pov' &&
-        typeof trackView3d.getDriverPovTuneTeamSlug === 'function'
-      ) {
-        const slug = trackView3d.getDriverPovTuneTeamSlug();
-        if (slug !== lastDriverPovTuneSlug) {
-          lastDriverPovTuneSlug = slug;
-          syncDriverPovTuneSlidersFromView3d();
-        }
-      }
     } else {
       void ensureTrackView3d().then((v) => {
         if (!isViewMode3d()) return;
@@ -1459,16 +1380,6 @@ function drawFrame() {
           metaBuiltFor3d = sessionMeta;
         }
         v.updateFrame(frame, colors, leaderCode, selectedKey);
-        if (
-          cameraModeSelect?.value === 'driver_pov' &&
-          typeof v.getDriverPovTuneTeamSlug === 'function'
-        ) {
-          const slug = v.getDriverPovTuneTeamSlug();
-          if (slug !== lastDriverPovTuneSlug) {
-            lastDriverPovTuneSlug = slug;
-            syncDriverPovTuneSlidersFromView3d();
-          }
-        }
       });
     }
   } else {
@@ -2061,7 +1972,10 @@ function loop(ts) {
   ) {
     lastSessionKeepaliveMs = nowWall;
     const sid = sessionId;
-    void fetch(`/api/session/${encodeURIComponent(sid)}/meta`).then((r) => {
+    void fetch(
+      apiUrl(`/api/session/${encodeURIComponent(sid)}/meta`),
+      defaultFetchInit(),
+    ).then((r) => {
       if (r.status === 404 && sessionId === sid) handleSessionGone();
     });
   }
@@ -2126,7 +2040,6 @@ async function loadSelectedSession(initialFrame) {
   sessionMeta = null;
   selectedDriverCode = null;
   autoPickLeaderDone = false;
-  lastDriverPovTuneSlug = null;
   btnPlay.disabled = true;
   btnPause.disabled = true;
   scrub.disabled = true;
@@ -2552,9 +2465,6 @@ async function init() {
             cameraModeSelect.value || 'free'
           ),
         );
-        if (cameraModeSelect.value === 'driver_pov') {
-          syncDriverPovTuneSlidersFromView3d();
-        }
       });
       const frame =
         getFrameBlendAt(frameIndex) ?? getFrameAt(Math.floor(frameIndex));
@@ -2563,11 +2473,6 @@ async function init() {
       sync3dCanvasHint();
     });
   }
-
-  bindDriverPovTuneControls();
-  void ensureTrackView3d().then(() => {
-    syncDriverPovTuneSlidersFromView3d();
-  });
 
   requestAnimationFrame(loop);
 }

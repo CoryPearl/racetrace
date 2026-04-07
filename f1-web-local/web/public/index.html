@@ -207,101 +207,6 @@
               </div>
             </div>
             <div
-              id="driver-pov-tune-wrap"
-              class="canvas-3d-overlay-row driver-pov-tune-wrap"
-              hidden
-              role="region"
-              aria-label="Driver view camera tuning"
-            >
-              <details class="driver-pov-tune-details" open>
-                <summary class="driver-pov-tune-summary">Driver camera</summary>
-                <p class="driver-pov-tune-hint muted" id="driver-pov-tune-hint">
-                  Per team / GLB model — values are saved separately for each team in this
-                  browser. Use while in Driver POV.<span
-                    id="driver-pov-tune-team-slug"
-                    class="driver-pov-tune-team-slug"
-                  ></span>
-                </p>
-                <div class="driver-pov-tune-grid">
-                  <label class="driver-pov-tune-row"
-                    >L–R <span id="driver-pov-tune-x-val" class="driver-pov-tune-val"></span
-                  ></label>
-                  <input
-                    type="range"
-                    id="driver-pov-tune-x"
-                    min="-0.3"
-                    max="0.3"
-                    step="0.005"
-                    value="0"
-                    aria-label="Camera left right offset"
-                  />
-                  <label class="driver-pov-tune-row"
-                    >Up–down <span id="driver-pov-tune-y-val" class="driver-pov-tune-val"></span
-                  ></label>
-                  <input
-                    type="range"
-                    id="driver-pov-tune-y"
-                    min="-0.25"
-                    max="2"
-                    step="0.005"
-                    value="0"
-                    aria-label="Camera up down offset"
-                  />
-                  <label class="driver-pov-tune-row"
-                    >Fwd–back <span id="driver-pov-tune-z-val" class="driver-pov-tune-val"></span
-                  ></label>
-                  <input
-                    type="range"
-                    id="driver-pov-tune-z"
-                    min="-1"
-                    max="1"
-                    step="0.005"
-                    value="0"
-                    aria-label="Camera forward back offset in mesh space"
-                  />
-                  <label class="driver-pov-tune-row"
-                    >Look down <span id="driver-pov-tune-lookdown-val" class="driver-pov-tune-val"></span
-                  ></label>
-                  <input
-                    type="range"
-                    id="driver-pov-tune-lookdown"
-                    min="0.15"
-                    max="2.5"
-                    step="0.05"
-                    value="1"
-                    aria-label="Look down strength"
-                  />
-                  <label class="driver-pov-tune-row"
-                    >Look distance <span id="driver-pov-tune-lookdist-val" class="driver-pov-tune-val"></span
-                  ></label>
-                  <input
-                    type="range"
-                    id="driver-pov-tune-lookdist"
-                    min="0.35"
-                    max="2.2"
-                    step="0.05"
-                    value="1"
-                    aria-label="Look distance multiplier"
-                  />
-                  <label class="driver-pov-tune-row"
-                    >FOV <span id="driver-pov-tune-fov-val" class="driver-pov-tune-val"></span
-                  ></label>
-                  <input
-                    type="range"
-                    id="driver-pov-tune-fov"
-                    min="45"
-                    max="72"
-                    step="1"
-                    value="54"
-                    aria-label="Field of view degrees"
-                  />
-                </div>
-                <button type="button" class="btn driver-pov-tune-reset" id="driver-pov-tune-reset">
-                  Reset camera
-                </button>
-              </details>
-            </div>
-            <div
               id="driver-pov-meta"
               class="canvas-3d-overlay-row canvas-3d-overlay-row--driver-meta"
               hidden
@@ -596,6 +501,7 @@
         </aside>
       </main>
     </div>
+    <script src="/config.js"></script>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

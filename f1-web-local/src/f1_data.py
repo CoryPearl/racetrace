@@ -1,3 +1,4 @@
+import json
 import lzma
 import os
 import pickle
@@ -41,7 +42,10 @@ def _f1_project_root() -> str:
 
 def _computed_data_dir() -> str:
     """Absolute path to configured computed_data directory."""
-    raw = (get_settings().computed_data_location or "computed_data").strip()
+    raw = (
+        get_settings().computed_data_location
+        or "../f1-web-server/backend/compressed_computed_data"
+    ).strip()
     if os.path.isabs(raw):
         return os.path.normpath(raw)
     return os.path.normpath(os.path.join(_f1_project_root(), raw))
@@ -58,9 +62,16 @@ def _compressed_computed_data_dirs() -> list[str]:
     if not primary_parent:
         primary_parent = _f1_project_root()
     out = [os.path.join(primary_parent, "compressed_computed_data")]
-    fallback = os.path.join(_f1_project_root(), "compressed_computed_data")
-    if os.path.normpath(fallback) not in map(os.path.normpath, out):
-        out.append(fallback)
+    backend_cc = os.path.normpath(
+        os.path.join(_f1_project_root(), "..", "f1-web-server", "backend", "compressed_computed_data")
+    )
+    for fb in (
+        backend_cc,
+        os.path.join(_f1_project_root(), "compressed_computed_data"),
+        os.path.normpath(os.path.join(_f1_project_root(), "..", "compressed_computed_data")),
+    ):
+        if os.path.normpath(fb) not in map(os.path.normpath, out):
+            out.append(fb)
     return out
 
 
@@ -133,6 +144,67 @@ def _computed_telemetry_pkl_candidates(session, cache_suffix: str) -> list[str]:
     except Exception:
         pass
 
+    return out
+
+
+def _computed_telemetry_pkl_candidates_from_schedule(
+    year: int,
+    round_number: int,
+    session_type: str,
+    cache_suffix: str,
+) -> list[str]:
+    """
+    Telemetry pickle basenames **without** ``session.load()`` — uses static
+    ``frontend/data/schedule`` or ``web/public/data/schedule`` JSON.
+    """
+    schedule_path = None
+    for sub in (
+        ("frontend", "data", "schedule"),
+        ("web", "public", "data", "schedule"),
+    ):
+        p = os.path.join(_f1_project_root(), *sub, f"{year}.json")
+        if os.path.isfile(p):
+            schedule_path = p
+            break
+    if not schedule_path:
+        return []
+    try:
+        with open(schedule_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    events = data.get("events") if isinstance(data, dict) else None
+    if not isinstance(events, list):
+        return []
+    ev = None
+    for e in events:
+        if isinstance(e, dict) and int(e.get("round_number", -1)) == int(round_number):
+            ev = e
+            break
+    if ev is None:
+        return []
+    en = str(ev.get("event_name", "") or "").replace(" ", "_")
+    if not en:
+        return []
+    sn = {"R": "Race", "S": "Sprint", "Q": "Qualifying"}.get(session_type, "Race")
+    y = int(year)
+    r = int(round_number)
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def add(rel: str) -> None:
+        rel = rel.replace(os.sep, "/")
+        if rel in seen:
+            return
+        seen.add(rel)
+        out.append(rel)
+
+    add(f"{y}_Season_Round_{r}:_{en}_-_{sn}_{cache_suffix}_telemetry.pkl")
+    add(f"{y}_Season_Round_{r}_{en}_{sn}_{cache_suffix}_telemetry.pkl")
+    add(f"{en}_{cache_suffix}_telemetry.pkl")
+    add(f"{y}_R{r}_{en}_{cache_suffix}_telemetry.pkl")
+    add(f"{y}_r{r:02d}_{en}_{cache_suffix}_telemetry.pkl")
+    add(f"{y}_Season_Round_{r}_{en}_{sn}_{cache_suffix}_telemetry.pkl")
     return out
 
 

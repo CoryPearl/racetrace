@@ -29,8 +29,16 @@ For production (many users), prefer **gunicorn** with a single worker unless you
 
 ## Caches (created at runtime; not shipped in the repo)
 
-- **FastF1 live cache** — Default is under your user cache (macOS: `~/Library/Caches/f1-race-replay/fastf1`). Override with `cache_location` in `~/.config/f1-race-replay/settings.json` (absolute path, or a path relative to the repo if you use a custom layout). **Stage-2** API pickles can be read from the repo’s **`compressed_fastf1-cache/`** (LZMA) without duplicating plain `.ff1pkl` files next to the live cache.
-- **`computed_data/`** — Precomputed telemetry pickles (optional; speeds up loads). You can copy an existing tree if you want.
+Defaults in code use **paths relative to `f1-web-local/`** into the **`f1-web-server/backend/`** tree (same folders the server uses):
+
+| Data | Default relative path | Resolves to (example) |
+|------|------------------------|-------------------------|
+| Telemetry LZMA | `../f1-web-server/backend/compressed_computed_data` | |
+| FastF1 stage-2 | `../f1-web-server/backend/compressed_fastf1-cache` | |
+
+Override with `COMPRESSED_FASTF1_CACHE_DIR`, `F1_COMPRESSED_FASTF1_REL`, or `computed_data_location` in `~/.config/f1-race-replay/settings.json`.
+
+- **FastF1 live cache** — Still defaults to your **user profile** cache unless you set `cache_location` in `settings.json`. Stage-2 `.ff1pkl.xz` is read from the compressed roots above.
 
 ## Client-side replay bundles (no server-side session memory)
 

@@ -16,6 +16,31 @@ import {
 } from 'three/addons/renderers/CSS2DRenderer.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
+/** Skips ngrok browser warning on tunneled asset/API responses. */
+const _NGROK_FETCH_INIT = { headers: { 'ngrok-skip-browser-warning': 'true' } };
+
+/** Start/finish segment from payload, or from centerline start (same logic as 2D `app.js`). */
+function finishLineFromTrack(track) {
+  if (track.finish_line?.start && track.finish_line?.end) return track.finish_line;
+  const cx = track.centerline?.x;
+  const cy = track.centerline?.y;
+  if (!cx || !cy || cx.length < 2) return null;
+  const x0 = cx[0];
+  const y0 = cy[0];
+  const x1 = cx[1];
+  const y1 = cy[1];
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len;
+  const ny = dx / len;
+  const half = 100;
+  return {
+    start: { x: x0 + nx * half, y: y0 + ny * half },
+    end: { x: x0 - nx * half, y: y0 - ny * half },
+  };
+}
+
 /** If the mesh faces the wrong way vs telemetry motion, try ±Math.PI/2 steps. */
 const CAR_STL_YAW_OFFSET = 0;
 /** Set to 0 if the STL is already Y-up (e.g. Blender export). CAD exports are often Z-up. */
@@ -78,7 +103,7 @@ const TEAM_MODEL_SLUG_ALIASES = {
 };
 
 /**
- * Slugs with a local `web/public/models/{slug}.glb` (add the file, then the slug here).
+ * Slugs with a local `frontend/models/{slug}.glb` (add the file, then the slug here).
  * All other teams use the default simplify_car.stl mesh.
  */
 const TEAM_MODEL_ASSET_SLUGS = new Set([
@@ -123,7 +148,7 @@ function teamModelGlbBasename(slug) {
  *
  * HOW TO ADD A NEW TEAM CAR
  * --------------------------
- * 1. Export `<team_slug>.glb` into `web/public/models/`. The slug is `teamNameToSlug(TeamName)`:
+ * 1. Export `<team_slug>.glb` into `frontend/models/`. The slug is `teamNameToSlug(TeamName)`:
  *    e.g. "Ferrari" → ferrari.glb, "Aston Martin" → aston_martin.glb. If the file name must differ,
  *    add `TEAM_MODEL_GLB_FILENAME` (e.g. Haas → `haas.glb`).
  *
@@ -170,11 +195,21 @@ const TEAM_MODEL_CONFIG = {
 };
 
 /**
- * RB / Visa Cash App Racing Bulls: `rb.glb` faces opposite telemetry motion unless we add this to
- * the heading lerp target each frame. (Baked `y` in TEAM_MODEL_CONFIG is overwritten by motion —
- * see `updateHeadingFromMotion`.) Other teams unchanged. Tune to 0, ±π/2, or −π if still wrong.
+ * Extra yaw (rad) added to path heading so some GLB noses match telemetry forward. (Baked `y` in
+ * TEAM_MODEL_CONFIG is overwritten each frame — see `updateHeadingFromMotion`.) RB / Alfa Romeo
+ * models ship facing −telemetry; use Math.PI. Tune per slug if a new car is wrong.
  */
-const RB_TEAM_MESH_HEADING_EXTRA_YAW = Math.PI;
+const TEAM_MESH_HEADING_EXTRA_YAW = {
+  rb: Math.PI,
+  alfa_romeo: Math.PI,
+};
+
+function teamMeshHeadingExtraYaw(slug) {
+  if (!slug || typeof slug !== 'string') return 0;
+  return Object.prototype.hasOwnProperty.call(TEAM_MESH_HEADING_EXTRA_YAW, slug)
+    ? TEAM_MESH_HEADING_EXTRA_YAW[slug]
+    : 0;
+}
 
 /** Back-compat alias used inside prepareCarGroupTemplate. */
 const TEAM_MODEL_ORIENTATION = TEAM_MODEL_CONFIG;
@@ -571,10 +606,6 @@ export function createTrackView3D(wrapEl) {
   /** Wall-clock delta between `updateFrame` calls — frame-rate–independent car smoothing. */
   let lastFrameUpdateTs = 0;
 
-  const DRIVER_POV_TUNE_DEFAULTS_REV = 2;
-  const DRIVER_POV_TUNE_STORAGE_KEY = 'f1-driver-pov-tune-v2';
-  const DRIVER_POV_TUNE_STORAGE_KEY_LEGACY = 'f1-driver-pov-tune-v1';
-
   function driverPovTuneDefaults() {
     return {
       offsetX: 0,
@@ -589,7 +620,6 @@ export function createTrackView3D(wrapEl) {
   /**
    * Ship-time cockpit defaults per team GLB (mesh-local offsets + look + FOV).
    * Add a row when you measure a model; keys are canonical slugs (same as TEAM_MODEL_ASSET_SLUGS).
-   * User sliders + localStorage override per team on top of this.
    */
   const TEAM_DRIVER_POV_BASE = {
     red_bull_racing: {
@@ -672,11 +702,47 @@ export function createTrackView3D(wrapEl) {
       lookDistMul: 1,
       fov: 72,
     },
-    //todo racing_point, alphaturi, toro_rosso,renault
+    alphaturi: {
+      offsetX: -0.15,
+      offsetY: 0.19,
+      offsetZ: 0.535,
+      lookDownMul: 1,
+      lookDistMul: 1,
+      fov: 72,
+    },
+    alfa_romeo: {
+      offsetX: -0.155,
+      offsetY: -0.225,
+      offsetZ: 0.18,
+      lookDownMul: 1,
+      lookDistMul: 1,
+      fov: 72,
+    },
+    renault: {
+      offsetX: -0.155,
+      offsetY: 0.37,
+      offsetZ: 0.38,
+      lookDownMul: 1,
+      lookDistMul: 1,
+      fov: 72,
+    },
+    racing_point: {
+      offsetX: -0.15,
+      offsetY: 0.395,
+      offsetZ: 0.375,
+      lookDownMul: 1,
+      lookDistMul: 1,
+      fov: 72,
+    },
+    toro_rosso: {
+      offsetX: -0.15,
+      offsetY: 0.35,
+      offsetZ: 0.355,
+      lookDownMul: 1,
+      lookDistMul: 1,
+      fov: 72,
+    },
   };
-
-  /** @type {Record<string, ReturnType<typeof driverPovTuneDefaults>>} */
-  let driverPovTunePerTeam = {};
 
   function getDriverPovTuneStorageSlug() {
     if (!lastCamFollowCode || lastCamFollowCode === '__SC__')
@@ -691,74 +757,14 @@ export function createTrackView3D(wrapEl) {
 
   /**
    * Effective tune for the car currently followed in driver POV (team slug from session meta).
-   * Order: defaults → optional ship-time TEAM_DRIVER_POV_BASE[slug] → optional saved perTeam[slug].
-   * Migrated v1 global tune applies as __default__ only when that slug has no TEAM_DRIVER_POV_BASE row.
+   * Order: defaults → optional ship-time TEAM_DRIVER_POV_BASE[slug].
    */
   function getEffectiveDriverPovTune() {
     const d = driverPovTuneDefaults();
     const slug = getDriverPovTuneStorageSlug();
     const teamBase = TEAM_DRIVER_POV_BASE[slug] || {};
-    let base = mergeDriverPovTune(d, teamBase);
-    const legacy = driverPovTunePerTeam.__default__;
-    if (legacy && typeof legacy === 'object' && slug === '__fallback__') {
-      base = mergeDriverPovTune(base, legacy);
-    }
-    const saved = driverPovTunePerTeam[slug];
-    if (saved && typeof saved === 'object') {
-      base = mergeDriverPovTune(base, saved);
-    }
-    return base;
+    return mergeDriverPovTune(d, teamBase);
   }
-
-  function loadDriverPovTuneFromStorage() {
-    try {
-      const raw = localStorage.getItem(DRIVER_POV_TUNE_STORAGE_KEY);
-      if (raw) {
-        const j = JSON.parse(raw);
-        if (Number(j.rev) === DRIVER_POV_TUNE_DEFAULTS_REV && j.perTeam) {
-          driverPovTunePerTeam = { ...j.perTeam };
-          return;
-        }
-      }
-      const legacyRaw = localStorage.getItem(
-        DRIVER_POV_TUNE_STORAGE_KEY_LEGACY,
-      );
-      if (legacyRaw) {
-        const j = JSON.parse(legacyRaw);
-        if (Number(j.rev) === 1) {
-          const { rev: _r, ...rest } = j;
-          driverPovTunePerTeam.__default__ = {
-            ...driverPovTuneDefaults(),
-            ...rest,
-          };
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  function saveDriverPovTuneToStorage() {
-    try {
-      localStorage.setItem(
-        DRIVER_POV_TUNE_STORAGE_KEY,
-        JSON.stringify({
-          rev: DRIVER_POV_TUNE_DEFAULTS_REV,
-          perTeam: driverPovTunePerTeam,
-        }),
-      );
-    } catch {
-      /* ignore */
-    }
-  }
-
-  function applyDriverPovFovIfActive() {
-    if (cameraMode !== 'driver_pov' || !active) return;
-    camera.fov = getEffectiveDriverPovTune().fov;
-    camera.updateProjectionMatrix();
-  }
-
-  loadDriverPovTuneFromStorage();
 
   /**
    * World-space smoothing for car roots — removes micro-jerk from 25 Hz samples + blend edges.
@@ -914,11 +920,9 @@ export function createTrackView3D(wrapEl) {
     if (yaw === undefined || yaw === null) {
       yaw = root.userData.lastYaw ?? 0;
       const mesh = root.userData.mesh;
-      if (
-        mesh?.userData?.geomSource === 'gltf' &&
-        mesh.userData.teamSlug === 'rb'
-      ) {
-        yaw -= RB_TEAM_MESH_HEADING_EXTRA_YAW;
+      const extra = teamMeshHeadingExtraYaw(mesh?.userData?.teamSlug);
+      if (mesh?.userData?.geomSource === 'gltf' && extra) {
+        yaw -= extra;
       }
     }
     const fx = Math.sin(yaw);
@@ -940,9 +944,10 @@ export function createTrackView3D(wrapEl) {
    * the GLB volume (not a world-sin/cos point that ignores model nose/up). Look direction follows
    * the car’s world -Z (Three.js forward) via `getWorldDirection`.
    *
-   * RB-only: that GLB’s `unitScale` is small (large bbox), so raw tune offsets move the camera
-   * less in world space; we scale user offsets by `carCubeSize / mesh.scale.x` only for `rb`.
-   * RB: mesh gets +π so the body faces telemetry; local -Z can still point aft — negate look for POV.
+   * Some GLBs (large bbox → small `mesh.scale.x`) need the **entire** cockpit offset scaled by
+   * `carCubeSize / w`: world eye height is `localY * w`, so a fixed local base (0.33, …) alone
+   * collapses toward 0 when `w` is tiny — camera sits too low even with “normal” tune values.
+   * Same teams as `TEAM_MESH_HEADING_EXTRA_YAW` (rb, alfa_romeo) here; negate `_camDir` for POV.
    */
   function applyDriverPovCamera(code) {
     const root = carMeshes.get(code);
@@ -961,11 +966,13 @@ export function createTrackView3D(wrapEl) {
       camera.updateProjectionMatrix();
     }
     if (geom === 'gltf') {
-      const invScaleNorm = slug === 'rb' ? carCubeSize / w : 1;
+      const cockpitScale = teamMeshHeadingExtraYaw(slug)
+        ? carCubeSize / Math.max(w, 1e-8)
+        : 1;
       _cockpitLocal.set(
-        0.15 + t.offsetX * invScaleNorm,
-        0.33 + t.offsetY * invScaleNorm,
-        -0.17 + t.offsetZ * invScaleNorm,
+        (0.15 + t.offsetX) * cockpitScale,
+        (0.33 + t.offsetY) * cockpitScale,
+        (-0.17 + t.offsetZ) * cockpitScale,
       );
     } else if (geom === 'stl') {
       _cockpitLocal.set(0.11 + t.offsetX, 0.27 + t.offsetY, -0.13 + t.offsetZ);
@@ -978,7 +985,7 @@ export function createTrackView3D(wrapEl) {
     camera.position.lerp(_desiredCamPos, DRIVER_POV_CAM_LERP);
 
     mesh.getWorldDirection(_camDir);
-    if (geom === 'gltf' && slug === 'rb') {
+    if (geom === 'gltf' && teamMeshHeadingExtraYaw(slug)) {
       _camDir.negate();
     }
     const lookDist = Math.max(w * 50 * t.lookDistMul, 480);
@@ -1398,7 +1405,7 @@ export function createTrackView3D(wrapEl) {
       const tried = carStlFetchUrls();
       for (const url of tried) {
         try {
-          const res = await fetch(url);
+          const res = await fetch(url, _NGROK_FETCH_INIT);
           if (res.ok) {
             buf = await res.arrayBuffer();
             break;
@@ -1412,7 +1419,7 @@ export function createTrackView3D(wrapEl) {
         console.warn(
           '[view3d] Could not fetch simplify_car.stl — tried:',
           tried,
-          '(put web/public/simplify_car.stl and open the app over http, not file://)',
+          '(put frontend/simplify_car.stl and open the app over http, not file://)',
         );
         carStlMaster = null;
         return;
@@ -1483,7 +1490,7 @@ export function createTrackView3D(wrapEl) {
 
         for (const { url } of tried) {
           try {
-            const res = await fetch(url);
+            const res = await fetch(url, _NGROK_FETCH_INIT);
             if (!res.ok) continue;
             const buf = await res.arrayBuffer();
             const basePath = teamModelUrlBase(url);
@@ -1542,7 +1549,7 @@ export function createTrackView3D(wrapEl) {
         const gltfLoader = new GLTFLoader();
         for (const url of steeringWheelFetchUrls()) {
           try {
-            const res = await fetch(url);
+            const res = await fetch(url, _NGROK_FETCH_INIT);
             if (!res.ok) continue;
             const buf = await res.arrayBuffer();
             const i = url.lastIndexOf('/');
@@ -1714,11 +1721,9 @@ export function createTrackView3D(wrapEl) {
     }
     if (pathYaw === undefined || pathYaw === null) {
       const mesh = root.userData.mesh;
-      if (
-        mesh?.userData?.geomSource === 'gltf' &&
-        mesh.userData.teamSlug === 'rb'
-      ) {
-        pathYaw = lastMeshYaw - RB_TEAM_MESH_HEADING_EXTRA_YAW;
+      const extra = teamMeshHeadingExtraYaw(mesh?.userData?.teamSlug);
+      if (mesh?.userData?.geomSource === 'gltf' && extra) {
+        pathYaw = lastMeshYaw - extra;
       } else {
         pathYaw = lastMeshYaw;
       }
@@ -1736,11 +1741,9 @@ export function createTrackView3D(wrapEl) {
     const mesh = root.userData.mesh;
     if (mesh) {
       let headingTarget = pathYaw;
-      if (
-        mesh.userData.geomSource === 'gltf' &&
-        mesh.userData.teamSlug === 'rb'
-      ) {
-        headingTarget = pathYaw + RB_TEAM_MESH_HEADING_EXTRA_YAW;
+      const extra = teamMeshHeadingExtraYaw(mesh.userData.teamSlug);
+      if (mesh.userData.geomSource === 'gltf' && extra) {
+        headingTarget = pathYaw + extra;
       }
       const yaw = lerpAngleShortest(mesh.rotation.y, headingTarget, yawT);
       root.userData.lastYaw = yaw;
@@ -2044,6 +2047,87 @@ export function createTrackView3D(wrapEl) {
       trackGroup.add(new THREE.Line(geom, mat));
     }
 
+    /** Checkered strip on the racing surface (start/finish). */
+    const fl = finishLineFromTrack(track);
+    if (fl?.start && fl?.end) {
+      const yFl = 0.088;
+      const s = toThreeVec(fl.start.x, fl.start.y);
+      const e = toThreeVec(fl.end.x, fl.end.y);
+      s.y = e.y = yFl;
+      const dx = e.x - s.x;
+      const dz = e.z - s.z;
+      const len = Math.hypot(dx, dz) || 1;
+      const ux = dx / len;
+      const uz = dz / len;
+      const px = -uz;
+      const pz = ux;
+      const halfW = Math.max(2.2, Math.min(5, len * 0.014));
+      const stripes = Math.max(10, Math.min(28, Math.round(len / 12)));
+      const seg = len / stripes;
+      const flGeoms = [];
+      for (let i = 0; i < stripes; i++) {
+        const t0 = i * seg;
+        const t1 = (i + 1) * seg;
+        const ax = s.x + ux * t0 + px * halfW;
+        const az = s.z + uz * t0 + pz * halfW;
+        const bx = s.x + ux * t1 + px * halfW;
+        const bz = s.z + uz * t1 + pz * halfW;
+        const cx = s.x + ux * t1 - px * halfW;
+        const cz = s.z + uz * t1 - pz * halfW;
+        const dxw = s.x + ux * t0 - px * halfW;
+        const dzw = s.z + uz * t0 - pz * halfW;
+        const g = new THREE.BufferGeometry();
+        const positions = new Float32Array([
+          ax,
+          yFl,
+          az,
+          bx,
+          yFl,
+          bz,
+          cx,
+          yFl,
+          cz,
+          ax,
+          yFl,
+          az,
+          cx,
+          yFl,
+          cz,
+          dxw,
+          yFl,
+          dzw,
+        ]);
+        g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        g.computeVertexNormals();
+        addVertexColorsToGeometry(g, i % 2 === 0 ? 0xececec : 0x0c0c0c);
+        flGeoms.push(g);
+      }
+      if (flGeoms.length > 0) {
+        const mergedFl = mergeGeometries(flGeoms);
+        for (const g of flGeoms) {
+          g.dispose();
+        }
+        if (mergedFl) {
+          const flMat = new THREE.MeshStandardMaterial({
+            vertexColors: true,
+            roughness: 0.55,
+            metalness: 0.08,
+          });
+          trackGroup.add(new THREE.Mesh(mergedFl, flMat));
+        }
+      }
+      const edgeGeom = new THREE.BufferGeometry().setFromPoints([
+        s.clone(),
+        e.clone(),
+      ]);
+      trackGroup.add(
+        new THREE.Line(
+          edgeGeom,
+          new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 }),
+        ),
+      );
+    }
+
     const dist = diag * 0.55;
     camera.position.set(cx + dist * 0.55, diag * 0.42, cy + dist * 0.55);
     controls.target.set(cx, 0, cy);
@@ -2280,32 +2364,6 @@ export function createTrackView3D(wrapEl) {
     camera.updateProjectionMatrix();
   }
 
-  function getDriverPovTune() {
-    return { ...getEffectiveDriverPovTune() };
-  }
-
-  function getDriverPovTuneTeamSlug() {
-    return getDriverPovTuneStorageSlug();
-  }
-
-  /**
-   * @param {Partial<ReturnType<typeof driverPovTuneDefaults>>} partial
-   */
-  function setDriverPovTune(partial) {
-    const slug = getDriverPovTuneStorageSlug();
-    const cur = getEffectiveDriverPovTune();
-    driverPovTunePerTeam[slug] = { ...cur, ...partial };
-    saveDriverPovTuneToStorage();
-    applyDriverPovFovIfActive();
-  }
-
-  function resetDriverPovTune() {
-    const slug = getDriverPovTuneStorageSlug();
-    delete driverPovTunePerTeam[slug];
-    saveDriverPovTuneToStorage();
-    applyDriverPovFovIfActive();
-  }
-
   function dispose() {
     controls.dispose();
     if (steeringWheelModel) {
@@ -2339,10 +2397,6 @@ export function createTrackView3D(wrapEl) {
     updateFrame,
     setCameraMode,
     getCameraMode,
-    getDriverPovTune,
-    getDriverPovTuneTeamSlug,
-    setDriverPovTune,
-    resetDriverPovTune,
     dispose,
     get element() {
       return el;

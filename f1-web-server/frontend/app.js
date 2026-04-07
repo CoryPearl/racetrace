@@ -197,7 +197,7 @@ const ctx = canvas.getContext('2d');
  * Bump this when editing view3d.js so `import()` uses a new URL (separate module cache entry).
  * Server also sends Cache-Control: no-cache for .js — restart uvicorn after changing app.py.
  */
-const VIEW3D_MODULE_VER = '100';
+const VIEW3D_MODULE_VER = '102';
 
 /** @type {Awaited<ReturnType<typeof import('./view3d.js').createTrackView3D>> | null} */
 let trackView3d = null;
@@ -324,9 +324,6 @@ let autoPickLeaderDone = false;
 
 let lastReplayHashSyncMs = 0;
 
-/** @type {string | null} */
-let lastDriverPovTuneSlug = null;
-
 /**
  * Same ordering as the sidebar leaderboard (stable sort on position; missing → 99).
  * @param {Record<string, any>} drivers
@@ -375,11 +372,6 @@ function sync3dCanvasHint() {
   }
   if (cameraModeWrap) {
     cameraModeWrap.hidden = !seen || !in3d || !sessionId;
-  }
-  const driverPovTuneWrap = document.getElementById('driver-pov-tune-wrap');
-  if (driverPovTuneWrap) {
-    const driver = cameraModeSelect?.value === 'driver_pov';
-    driverPovTuneWrap.hidden = !seen || !in3d || !sessionId || !driver;
   }
   set3dHintText();
 }
@@ -559,97 +551,6 @@ async function ensureTrackView3d() {
   }
   trackView3d = await trackView3dPromise;
   return trackView3d;
-}
-
-function updateDriverPovTuneValueLabels() {
-  const x = document.getElementById('driver-pov-tune-x');
-  const xv = document.getElementById('driver-pov-tune-x-val');
-  if (x && xv) xv.textContent = Number(x.value).toFixed(3);
-  const y = document.getElementById('driver-pov-tune-y');
-  const yv = document.getElementById('driver-pov-tune-y-val');
-  if (y && yv) yv.textContent = Number(y.value).toFixed(3);
-  const z = document.getElementById('driver-pov-tune-z');
-  const zv = document.getElementById('driver-pov-tune-z-val');
-  if (z && zv) zv.textContent = Number(z.value).toFixed(3);
-  const ld = document.getElementById('driver-pov-tune-lookdown');
-  const ldv = document.getElementById('driver-pov-tune-lookdown-val');
-  if (ld && ldv) ldv.textContent = Number(ld.value).toFixed(2);
-  const ldist = document.getElementById('driver-pov-tune-lookdist');
-  const ldistv = document.getElementById('driver-pov-tune-lookdist-val');
-  if (ldist && ldistv) ldistv.textContent = Number(ldist.value).toFixed(2);
-  const fov = document.getElementById('driver-pov-tune-fov');
-  const fovv = document.getElementById('driver-pov-tune-fov-val');
-  if (fov && fovv) fovv.textContent = `${Number(fov.value).toFixed(0)}°`;
-}
-
-function syncDriverPovTuneSlidersFromView3d() {
-  void ensureTrackView3d().then((v) => {
-    const t = v.getDriverPovTune();
-    const set = (id, val) => {
-      const el = document.getElementById(id);
-      if (el) el.value = String(val);
-    };
-    set('driver-pov-tune-x', t.offsetX);
-    set('driver-pov-tune-y', t.offsetY);
-    set('driver-pov-tune-z', t.offsetZ);
-    set('driver-pov-tune-lookdown', t.lookDownMul);
-    set('driver-pov-tune-lookdist', t.lookDistMul);
-    set('driver-pov-tune-fov', t.fov);
-    updateDriverPovTuneValueLabels();
-    const slugEl = document.getElementById('driver-pov-tune-team-slug');
-    if (slugEl && typeof v.getDriverPovTuneTeamSlug === 'function') {
-      const slug = v.getDriverPovTuneTeamSlug();
-      slugEl.textContent =
-        slug && slug !== '__fallback__' ? `Current model: ${slug}` : '';
-    }
-  });
-}
-
-function bindDriverPovTuneControls() {
-  const ids = [
-    'driver-pov-tune-x',
-    'driver-pov-tune-y',
-    'driver-pov-tune-z',
-    'driver-pov-tune-lookdown',
-    'driver-pov-tune-lookdist',
-    'driver-pov-tune-fov',
-  ];
-  const apply = () => {
-    void ensureTrackView3d().then((v) => {
-      v.setDriverPovTune({
-        offsetX: parseFloat(
-          document.getElementById('driver-pov-tune-x')?.value ?? '0',
-        ),
-        offsetY: parseFloat(
-          document.getElementById('driver-pov-tune-y')?.value ?? '0',
-        ),
-        offsetZ: parseFloat(
-          document.getElementById('driver-pov-tune-z')?.value ?? '0',
-        ),
-        lookDownMul: parseFloat(
-          document.getElementById('driver-pov-tune-lookdown')?.value ?? '1',
-        ),
-        lookDistMul: parseFloat(
-          document.getElementById('driver-pov-tune-lookdist')?.value ?? '1',
-        ),
-        fov: parseFloat(
-          document.getElementById('driver-pov-tune-fov')?.value ?? '54',
-        ),
-      });
-      updateDriverPovTuneValueLabels();
-    });
-  };
-  for (const id of ids) {
-    document.getElementById(id)?.addEventListener('input', apply);
-  }
-  document
-    .getElementById('driver-pov-tune-reset')
-    ?.addEventListener('click', () => {
-      void ensureTrackView3d().then((v) => {
-        v.resetDriverPovTune();
-        syncDriverPovTuneSlidersFromView3d();
-      });
-    });
 }
 
 function resizeTrackViews() {
@@ -1113,7 +1014,6 @@ function handleSessionGone() {
   hideScrubHoverTip();
   selectedDriverCode = null;
   autoPickLeaderDone = false;
-  lastDriverPovTuneSlug = null;
   if (sessionBanner) sessionBanner.hidden = true;
   if (loadStatus) {
     loadStatus.classList.remove('load-status--ready');
@@ -1466,25 +1366,12 @@ function drawFrame() {
   const leaderCode = leaderCodeFromFrame(frame);
 
   if (view3d) {
-    if (cameraModeSelect?.value !== 'driver_pov') {
-      lastDriverPovTuneSlug = null;
-    }
     if (trackView3d) {
       if (metaBuiltFor3d !== sessionMeta) {
         trackView3d.rebuildTrack(sessionMeta);
         metaBuiltFor3d = sessionMeta;
       }
       trackView3d.updateFrame(frame, colors, leaderCode, selectedKey);
-      if (
-        cameraModeSelect?.value === 'driver_pov' &&
-        typeof trackView3d.getDriverPovTuneTeamSlug === 'function'
-      ) {
-        const slug = trackView3d.getDriverPovTuneTeamSlug();
-        if (slug !== lastDriverPovTuneSlug) {
-          lastDriverPovTuneSlug = slug;
-          syncDriverPovTuneSlidersFromView3d();
-        }
-      }
     } else {
       void ensureTrackView3d().then((v) => {
         if (!isViewMode3d()) return;
@@ -1493,16 +1380,6 @@ function drawFrame() {
           metaBuiltFor3d = sessionMeta;
         }
         v.updateFrame(frame, colors, leaderCode, selectedKey);
-        if (
-          cameraModeSelect?.value === 'driver_pov' &&
-          typeof v.getDriverPovTuneTeamSlug === 'function'
-        ) {
-          const slug = v.getDriverPovTuneTeamSlug();
-          if (slug !== lastDriverPovTuneSlug) {
-            lastDriverPovTuneSlug = slug;
-            syncDriverPovTuneSlidersFromView3d();
-          }
-        }
       });
     }
   } else {
@@ -2163,7 +2040,6 @@ async function loadSelectedSession(initialFrame) {
   sessionMeta = null;
   selectedDriverCode = null;
   autoPickLeaderDone = false;
-  lastDriverPovTuneSlug = null;
   btnPlay.disabled = true;
   btnPause.disabled = true;
   scrub.disabled = true;
@@ -2589,9 +2465,6 @@ async function init() {
             cameraModeSelect.value || 'free'
           ),
         );
-        if (cameraModeSelect.value === 'driver_pov') {
-          syncDriverPovTuneSlidersFromView3d();
-        }
       });
       const frame =
         getFrameBlendAt(frameIndex) ?? getFrameAt(Math.floor(frameIndex));
@@ -2600,11 +2473,6 @@ async function init() {
       sync3dCanvasHint();
     });
   }
-
-  bindDriverPovTuneControls();
-  void ensureTrackView3d().then(() => {
-    syncDriverPovTuneSlidersFromView3d();
-  });
 
   requestAnimationFrame(loop);
 }
