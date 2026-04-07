@@ -1,6 +1,7 @@
 /**
  * Backend base URL for `/api/*` only (no trailing slash). `/data/*` is same-origin (this site).
- * Temporarily hardcoded for testing — change the string or set to "" for same-origin.
- * (Vercel build overwrites this if NEXT_PUBLIC_API_BASE is set.)
+ * Default: same origin (API served with this static site). For a separate API host, set
+ * `NEXT_PUBLIC_API_BASE` (or `PUBLIC_API_BASE` / `API_BASE`) at build time — see
+ * `scripts/write-vercel-config.js` — or assign `window.__API_BASE__` before other scripts load.
  */
-// window.__API_BASE__ = 'https://9937-144-118-76-151.ngrok-free.app';
+window.__API_BASE__ = '';
