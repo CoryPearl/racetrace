@@ -1,29 +1,87 @@
+# ─── OS ───
 .DS_Store
-f1-web-local/compressed_fastf1-cache/
+Thumbs.db
+Desktop.ini
+
+# ─── Editors & IDEs ───
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# ─── Environment & secrets ───
+.env
+.env.*
+!.env.example
+.envrc
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+*.p12
+
+# ─── Python ───
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.eggs/
+*.egg
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+pip-log.txt
+
+# ─── Virtual environments ───
+.venv/
+venv/
+ENV/
+
+# ─── Node (frontend tooling) ───
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# ─── Deploy / local tooling ───
+.vercel/
+
+# ─── Project: large caches & generated telemetry ───
+# FastF1 LZMA mirrors & precomputed pickles (see HOW_TO_RUN.md)
+compressed_fastf1-cache/
+compressed_computed_data/
 computed_data/
+
+# Legacy explicit paths (same dirs as patterns above; safe if layout moves)
 f1-web-server/compressed_fastf1-cache/
 f1-web-server/backend/compressed_fastf1-cache/
 f1-web-server/backend/compressed_computed_data/
 f1-web-server/backend/computed_data/
+f1-web-local/compressed_fastf1-cache/
 f1-web-local/compressed_computed_data/
-# Static replay JSON (scripts/export_static_replay.py); often large
+
+# Static replay chunks (export_static_replay.py); often very large
 f1-web-server/frontend/data/replays/**/*.json
 f1-web-local/web/public/data/replays/**/*.json
-f1-web-server/backend/.env
-# 3D meshes (team GLBs, steering wheel, default car STL); keep local or ship separately
+
+# ─── 3D assets (optional local copies; ship separately if needed) ───
 # f1-web-server/frontend/models/
 f1-web-local/web/public/models/
-# f1-web-server/frontend/simplify_car.stl
 f1-web-local/web/public/simplify_car.stl
-__pycache__/
-*.py[cod]
-.Python
-*.egg-info/
-.venv/
-venv/
-node_modules/
+# f1-web-server/frontend/simplify_car.stl
+
+# ─── Private local notes (remove these lines if you want them tracked) ───
 todo.txt
-racetrace.pem
 upload_files.txt
 ec2_ssh.txt
-.cursor/
+racetrace.pem

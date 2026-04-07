@@ -1,10 +1,11 @@
+# When using the full monorepo, rules also apply from `../.gitignore`.
+# Standalone clone: keep these ignores for caches and large generated files.
+
 .DS_Store
 compressed_fastf1-cache/
-computed_data/
 compressed_computed_data/
-# Static replay JSON (run scripts/export_static_replay.py); often large
+computed_data/
 web/public/data/replays/**/*.json
-# 3D meshes (team GLBs, steering wheel, default car STL)
 web/public/models/
 web/public/simplify_car.stl
 __pycache__/
@@ -13,7 +14,14 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+node_modules/
+.env
+.env.*
+!.env.example
+*.pem
+.idea/
+
 todo.txt
-racetrace.pem
 upload_files.txt
 ec2_ssh.txt
+racetrace.pem
