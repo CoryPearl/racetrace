@@ -789,6 +789,18 @@ function isStaticSessionId(id) {
   return typeof id === 'string' && id.startsWith('static:');
 }
 
+/** Free server-side frame buffers for this UUID (no-op for static bundle sessions). */
+function releaseServerSession(sid) {
+  if (!sid || isStaticSessionId(sid)) return;
+  const url = apiUrl(`/api/session/${encodeURIComponent(sid)}`);
+  const init = defaultFetchInit({ method: 'DELETE' });
+  try {
+    void fetch(url, { ...init, keepalive: true });
+  } catch {
+    /* ignore */
+  }
+}
+
 /** `#y=2024&r=1&s=R&f=12345` — shareable replay position (f = frame index). */
 function parseReplayHash() {
   const raw = location.hash.replace(/^#/, '');
@@ -2039,11 +2051,13 @@ async function loadSelectedSession(initialFrame) {
   loadStatus.classList.remove('load-status--ready', 'load-status--error');
   sessionGoneHandled = false;
   lastSessionKeepaliveMs = performance.now();
+  const previousServerSessionId = sessionId;
   chunkCache.clear();
   chunkInflight.clear();
   lbList.innerHTML = '';
   hideScrubHoverTip();
   sessionId = null;
+  releaseServerSession(previousServerSessionId);
   sessionMeta = null;
   selectedDriverCode = null;
   autoPickLeaderDone = false;
@@ -2480,6 +2494,10 @@ async function init() {
       sync3dCanvasHint();
     });
   }
+
+  window.addEventListener('pagehide', () => {
+    releaseServerSession(sessionId);
+  });
 
   requestAnimationFrame(loop);
 }

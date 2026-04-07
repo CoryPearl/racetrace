@@ -31,6 +31,7 @@ CORS_ORIGINS     Comma-separated allowed browser origins (e.g. your Vercel URL).
   Set explicitly in production. Use CORS_ORIGINS=0 to disable CORS middleware entirely.
 SESSION_TTL_SECONDS   Idle time before a loaded session is dropped (default 86400).
   The client pings /meta periodically so playback from cache still refreshes TTL.
+  The client also DELETEs /api/session/{id} when switching sessions or closing the tab to free RAM sooner.
 MAX_STORED_SESSIONS   Cap concurrent stored sessions (default 48).
 MAX_CONCURRENT_SESSION_LOADS   Parallel POST /api/session/load (default 3).
 MAX_FRAMES_PER_REQUEST   Max rows returned per GET .../frames (default 1200).
@@ -373,6 +374,19 @@ def load_session_route(body: LoadSessionBody):
         }
     finally:
         _load_semaphore.release()
+
+
+@app.delete("/api/session/{session_id}")
+def delete_session_route(session_id: str):
+    """
+    Drop a loaded replay from memory. Call when the client no longer needs this session_id
+    (e.g. user switched event or closed the tab) so RAM can be reclaimed; otherwise data stays
+    until SESSION_TTL_SECONDS idle expiry or MAX_STORED_SESSIONS LRU eviction.
+    """
+    sid = _parse_session_id(session_id)
+    if not _session_store.delete(sid):
+        raise HTTPException(status_code=404, detail="Unknown or expired session")
+    return {"ok": True}
 
 
 @app.get("/api/session/{session_id}/frames")

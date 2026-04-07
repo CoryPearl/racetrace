@@ -70,6 +70,14 @@ class SessionStore:
             self._sessions.clear()
             self._meta.clear()
 
+    def delete(self, sid: str) -> bool:
+        """Remove a session immediately (e.g. client navigated away). Returns True if it existed."""
+        with self._lock:
+            if sid not in self._sessions:
+                return False
+            self._drop(sid)
+            return True
+
     def stats(self) -> dict[str, int]:
         with self._lock:
             return {"sessions": len(self._sessions)}
