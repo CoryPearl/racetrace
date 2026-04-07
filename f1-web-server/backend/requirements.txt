@@ -1,0 +1,21 @@
+# F1 Race Replay — Python dependencies (FastAPI web UI + FastF1 telemetry pipeline).
+# Install: python3 -m pip install -r requirements.txt
+# Python 3.10+ recommended (typing / asyncio used throughout).
+
+# --- Web API ---
+fastapi
+uvicorn[standard]
+gunicorn
+python-dotenv
+boto3
+
+# --- Telemetry & data ---
+# fastf1: sessions, API cache, telemetry loading
+fastf1
+# Used directly in src/ and by FastF1
+pandas
+numpy
+# scipy: spatial index (cKDTree) in src/f1_data.py
+scipy
+# matplotlib: required by fastf1.plotting (driver color mapping in src/f1_data.py)
+matplotlib

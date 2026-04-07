@@ -1,0 +1,24 @@
+.DS_Store
+compressed_fastf1-cache/
+computed_data/
+compressed_computed_data/
+# Static replay JSON (scripts/export_static_replay.py); often large
+f1-web-server/frontend/data/replays/**/*.json
+f1-web-local/web/public/data/replays/**/*.json
+f1-web-server/backend/.env
+# 3D meshes (team GLBs, steering wheel, default car STL); keep local or ship separately
+f1-web-server/frontend/models/
+f1-web-local/web/public/models/
+f1-web-server/frontend/simplify_car.stl
+f1-web-local/web/public/simplify_car.stl
+__pycache__/
+*.py[cod]
+.Python
+*.egg-info/
+.venv/
+venv/
+node_modules/
+todo.txt
+racetrace.pem
+upload_files.txt
+ec2_ssh.txt

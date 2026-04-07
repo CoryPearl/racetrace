@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="theme-color" content="#050505" />
+    <title>RaceTrace</title>
+    <link rel="icon" href="/logo.jpg" type="image/jpeg" sizes="any" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="welcome-overlay" class="welcome-overlay" aria-hidden="false">
+      <div class="welcome-brand-mark" aria-hidden="true">
+        <img
+          class="welcome-logo-img"
+          src="/logo.jpg"
+          width="80"
+          height="80"
+          alt=""
+          decoding="async"
+        />
+      </div>
+      <div
+        class="welcome-inner"
+        role="dialog"
+        aria-labelledby="welcome-title"
+        aria-describedby="welcome-desc"
+        aria-modal="true"
+      >
+        <h1 id="welcome-title" class="welcome-title">RaceTrace</h1>
+        <p id="welcome-desc" class="welcome-tagline">
+          A Formula 1 session replay built from real timing and
+          telemetry—showing the race as it unfolded. Scrub the timeline to
+          explore positions, track status, weather, and full car data, with both
+          3D and 2D views. (Now with realistic car models!)
+        </p>
+        <button type="button" class="btn-welcome" id="welcome-start">
+          Start
+        </button>
+      </div>
+    </div>
+
+    <!-- ── App ── -->
+    <div id="app">
+      <aside class="sidebar">
+        <header class="brand">
+          <img
+            class="brand-logo"
+            src="/logo.jpg"
+            width="26"
+            height="26"
+            alt=""
+            decoding="async"
+          />
+          <h1>RaceTrace</h1>
+        </header>
+
+        <section class="panel">
+          <label class="field">
+            <span>Season</span>
+            <select id="year-input" aria-label="Season year">
+              <!-- <option value="2026">2026</option> -->
+              <option value="2025">2025</option>
+              <option value="2024">2024</option>
+              <option value="2023">2023</option>
+              <option value="2022">2022</option>
+              <option value="2021">2021</option>
+              <option value="2020">2020</option>
+              <option value="2019">2019</option>
+              <option value="2018">2018</option>
+            </select>
+          </label>
+          <p id="schedule-status" class="status muted"></p>
+        </section>
+
+        <section class="panel">
+          <label class="field">
+            <span>Race</span>
+            <select id="event-select" disabled aria-label="Race weekend">
+              <option value="">—</option>
+            </select>
+          </label>
+        </section>
+
+        <section class="panel" id="session-panel" hidden>
+          <div class="session-row session-row-types">
+            <label class="radio-pill"
+              ><input type="radio" name="stype" value="R" checked /><span
+                >Grand Prix</span
+              ></label
+            >
+            <label class="radio-pill" id="lbl-sprint"
+              ><input
+                type="radio"
+                name="stype"
+                value="S"
+                id="input-sprint"
+              /><span>Sprint</span></label
+            >
+            <label class="radio-pill" id="lbl-quali"
+              ><input
+                type="radio"
+                name="stype"
+                value="Q"
+                id="input-quali"
+              /><span>Qualifying</span></label
+            >
+          </div>
+          <button type="button" id="btn-load" class="btn primary" disabled>
+            Load session
+          </button>
+          <label class="field view-mode-field" for="view-mode-slider">
+            <span>Track view</span>
+            <div class="view-mode-slider-row" data-mode="2d">
+              <span class="view-mode-end" aria-hidden="true">2D</span>
+              <div class="view-mode-switch-shell">
+                <input
+                  type="range"
+                  id="view-mode-slider"
+                  class="view-mode-range"
+                  min="0"
+                  max="1"
+                  step="1"
+                  value="0"
+                  title="2D track map"
+                  aria-label="Track view: 2D or 3D"
+                  aria-valuemin="0"
+                  aria-valuemax="1"
+                  aria-valuenow="0"
+                  aria-valuetext="2D"
+                />
+              </div>
+              <span class="view-mode-end" aria-hidden="true">3D</span>
+            </div>
+          </label>
+          <p id="load-status" class="status muted"></p>
+        </section>
+      </aside>
+
+      <main class="main">
+        <div id="loading-overlay" class="overlay" hidden>
+          <div class="spinner"></div>
+          <p id="loading-text">Loading…</p>
+        </div>
+
+        <div class="hud-top">
+          <div id="session-banner" class="banner" hidden></div>
+        </div>
+
+        <div class="canvas-wrap">
+          <canvas id="track-canvas" aria-label="Track map"></canvas>
+          <div id="canvas-hint" class="canvas-hint muted" hidden>
+            <span class="canvas-hint-inner"
+              >Load a session to view the track</span
+            >
+          </div>
+          <div id="canvas-3d-overlay" class="canvas-3d-overlay muted" hidden>
+            <div class="canvas-3d-overlay-row" role="note">
+              <span class="canvas-hint-inner" id="canvas-3d-hint-text"
+                >Scroll: zoom · Left drag: orbit · Right drag: pan</span
+              >
+            </div>
+            <div
+              id="camera-mode-wrap"
+              class="canvas-3d-overlay-row canvas-3d-overlay-row--camera"
+              hidden
+              role="group"
+              aria-label="3D camera mode"
+            >
+              <div class="canvas-hint-inner camera-mode-pill">
+                <label class="camera-mode-label" for="camera-mode-select"
+                  >Camera</label
+                >
+                <select
+                  id="camera-mode-select"
+                  class="camera-mode-select"
+                  title="Free: orbit. Follow / Driver POV need a driver selected in the leaderboard."
+                  aria-label="3D camera: driver POV, follow, or free"
+                >
+                  <option value="driver_pov">Driver POV</option>
+                  <option value="follow">Follow</option>
+                  <option value="free" selected>Free</option>
+                </select>
+              </div>
+            </div>
+            <div
+              id="driver-pov-tune-wrap"
+              class="canvas-3d-overlay-row driver-pov-tune-wrap"
+              hidden
+              role="region"
+              aria-label="Driver view camera tuning"
+            >
+              <details class="driver-pov-tune-details" open>
+                <summary class="driver-pov-tune-summary">Driver camera</summary>
+                <p class="driver-pov-tune-hint muted" id="driver-pov-tune-hint">
+                  Per team / GLB model — values are saved separately for each team in this
+                  browser. Use while in Driver POV.<span
+                    id="driver-pov-tune-team-slug"
+                    class="driver-pov-tune-team-slug"
+                  ></span>
+                </p>
+                <div class="driver-pov-tune-grid">
+                  <label class="driver-pov-tune-row"
+                    >L–R <span id="driver-pov-tune-x-val" class="driver-pov-tune-val"></span
+                  ></label>
+                  <input
+                    type="range"
+                    id="driver-pov-tune-x"
+                    min="-0.3"
+                    max="0.3"
+                    step="0.005"
+                    value="0"
+                    aria-label="Camera left right offset"
+                  />
+                  <label class="driver-pov-tune-row"
+                    >Up–down <span id="driver-pov-tune-y-val" class="driver-pov-tune-val"></span
+                  ></label>
+                  <input
+                    type="range"
+                    id="driver-pov-tune-y"
+                    min="-0.25"
+                    max="2"
+                    step="0.005"
+                    value="0"
+                    aria-label="Camera up down offset"
+                  />
+                  <label class="driver-pov-tune-row"
+                    >Fwd–back <span id="driver-pov-tune-z-val" class="driver-pov-tune-val"></span
+                  ></label>
+                  <input
+                    type="range"
+                    id="driver-pov-tune-z"
+                    min="-1"
+                    max="1"
+                    step="0.005"
+                    value="0"
+                    aria-label="Camera forward back offset in mesh space"
+                  />
+                  <label class="driver-pov-tune-row"
+                    >Look down <span id="driver-pov-tune-lookdown-val" class="driver-pov-tune-val"></span
+                  ></label>
+                  <input
+                    type="range"
+                    id="driver-pov-tune-lookdown"
+                    min="0.15"
+                    max="2.5"
+                    step="0.05"
+                    value="1"
+                    aria-label="Look down strength"
+                  />
+                  <label class="driver-pov-tune-row"
+                    >Look distance <span id="driver-pov-tune-lookdist-val" class="driver-pov-tune-val"></span
+                  ></label>
+                  <input
+                    type="range"
+                    id="driver-pov-tune-lookdist"
+                    min="0.35"
+                    max="2.2"
+                    step="0.05"
+                    value="1"
+                    aria-label="Look distance multiplier"
+                  />
+                  <label class="driver-pov-tune-row"
+                    >FOV <span id="driver-pov-tune-fov-val" class="driver-pov-tune-val"></span
+                  ></label>
+                  <input
+                    type="range"
+                    id="driver-pov-tune-fov"
+                    min="45"
+                    max="72"
+                    step="1"
+                    value="54"
+                    aria-label="Field of view degrees"
+                  />
+                </div>
+                <button type="button" class="btn driver-pov-tune-reset" id="driver-pov-tune-reset">
+                  Reset camera
+                </button>
+              </details>
+            </div>
+            <div
+              id="driver-pov-meta"
+              class="canvas-3d-overlay-row canvas-3d-overlay-row--driver-meta"
+              hidden
+              role="group"
+              aria-label="Onboard driver"
+            >
+              <div class="canvas-hint-inner driver-hud-float driver-hud-float--in-overlay">
+                <span
+                  class="driver-chip"
+                  id="driver-hud-chip"
+                  aria-hidden="true"
+                  >—</span
+                >
+                <div class="driver-hud-float-titles">
+                  <span id="driver-hud-code" class="driver-hud-float-code">—</span>
+                  <span id="driver-hud-sub" class="driver-hud-float-sub">—</span>
+                </div>
+                <button
+                  type="button"
+                  class="driver-hud-close"
+                  id="driver-hud-close"
+                  aria-label="Close driver view"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          </div>
+          <div id="weather-panel" class="weather-panel" hidden>
+            <div class="weather-panel-title">Conditions</div>
+            <div class="weather-grid">
+              <span class="wx-label">Track</span>
+              <span id="wx-track" class="wx-value">—</span>
+              <span class="wx-label">Air</span>
+              <span id="wx-air" class="wx-value">—</span>
+              <span class="wx-label">Humidity</span>
+              <span id="wx-humidity" class="wx-value">—</span>
+              <span class="wx-label">Wind</span>
+              <span id="wx-wind" class="wx-value">—</span>
+              <span class="wx-label">Rain</span>
+              <span id="wx-rain" class="wx-value">—</span>
+            </div>
+          </div>
+          <div
+            id="driver-view-hud"
+            class="driver-view-hud"
+            hidden
+            aria-label="Onboard steering wheel telemetry"
+          >
+            <div class="driver-view-hud-inner" id="driver-view-hud-inner">
+              <div class="driver-hud-screen" id="driver-hud-screen">
+                <div class="driver-hud-shift" aria-hidden="true">
+                  <span class="driver-hud-shift-label">SHIFT</span>
+                  <div class="driver-hud-leds" id="driver-hud-shift-leds">
+                    <span class="driver-hud-led"></span>
+                    <span class="driver-hud-led"></span>
+                    <span class="driver-hud-led"></span>
+                    <span class="driver-hud-led"></span>
+                    <span class="driver-hud-led"></span>
+                    <span class="driver-hud-led"></span>
+                    <span class="driver-hud-led"></span>
+                    <span class="driver-hud-led"></span>
+                    <span class="driver-hud-led"></span>
+                    <span class="driver-hud-led"></span>
+                    <span class="driver-hud-led"></span>
+                    <span class="driver-hud-led"></span>
+                    <span class="driver-hud-led"></span>
+                    <span class="driver-hud-led"></span>
+                  </div>
+                </div>
+                <div class="driver-hud-screen-mid">
+                  <div class="driver-hud-input driver-hud-input--left">
+                    <span class="driver-hud-input-tag">THR</span>
+                    <div class="driver-hud-vtrack">
+                      <div
+                        class="driver-hud-vfill driver-hud-vfill--thr"
+                        id="driver-hud-throttle-bar"
+                      ></div>
+                    </div>
+                    <span class="driver-hud-input-pct" id="driver-hud-throttle-pct"
+                      >—</span
+                    >
+                  </div>
+                  <div class="driver-hud-mfd">
+                    <div class="driver-hud-mfd-tyre" id="driver-hud-tyre">—</div>
+                    <div class="driver-hud-mfd-gear" id="driver-hud-gear">—</div>
+                    <div class="driver-hud-mfd-speed">
+                      <span id="driver-hud-speed-kmh">—</span>
+                      <span class="driver-hud-mfd-unit">KM/H</span>
+                    </div>
+                    <div class="driver-hud-mfd-mph">
+                      <span id="driver-hud-speed-mph">—</span>
+                      <span class="driver-hud-mfd-unit">MPH</span>
+                    </div>
+                  </div>
+                  <div class="driver-hud-input driver-hud-input--right">
+                    <span class="driver-hud-input-tag">BRK</span>
+                    <div class="driver-hud-vtrack">
+                      <div
+                        class="driver-hud-vfill driver-hud-vfill--brk"
+                        id="driver-hud-brake-bar"
+                      ></div>
+                    </div>
+                    <span class="driver-hud-input-pct" id="driver-hud-brake-pct"
+                      >—</span
+                    >
+                  </div>
+                </div>
+                <div
+                  class="driver-hud-gear-strip"
+                  id="driver-hud-gear-strip"
+                  aria-hidden="true"
+                >
+                  <span data-g="N" class="driver-view-hud-g">N</span>
+                  <span data-g="1" class="driver-view-hud-g">1</span>
+                  <span data-g="2" class="driver-view-hud-g">2</span>
+                  <span data-g="3" class="driver-view-hud-g">3</span>
+                  <span data-g="4" class="driver-view-hud-g">4</span>
+                  <span data-g="5" class="driver-view-hud-g">5</span>
+                  <span data-g="6" class="driver-view-hud-g">6</span>
+                  <span data-g="7" class="driver-view-hud-g">7</span>
+                  <span data-g="8" class="driver-view-hud-g">8</span>
+                </div>
+                <div class="driver-hud-drs">
+                  <span class="driver-hud-drs-k">DRS</span>
+                  <span id="driver-hud-drs" class="driver-hud-drs-val">—</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="telemetry-panel" class="telemetry-panel stats-hud" hidden>
+            <div class="stats-hud-inner" id="telemetry-inner">
+              <header class="stats-hud-head">
+                <span class="driver-chip" id="tel-chip" aria-hidden="true"
+                  >—</span
+                >
+                <div class="stats-hud-head-meta">
+                  <span id="tel-code" class="stats-hud-code">—</span>
+                  <span id="tel-pos" class="stats-hud-sub">—</span>
+                </div>
+                <button
+                  type="button"
+                  class="stats-hud-close"
+                  id="telemetry-close"
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </header>
+              <div class="stats-hud-hero">
+                <span class="stats-hud-speed" id="tel-speed">—</span>
+                <span class="stats-hud-unit">km/h</span>
+              </div>
+              <div class="stats-hud-pills">
+                <div class="stats-pill">
+                  <span class="stats-pill-label">Gear</span>
+                  <span class="stats-pill-val" id="tel-gear">—</span>
+                </div>
+                <div class="stats-pill">
+                  <span class="stats-pill-label">DRS</span>
+                  <span class="stats-pill-val" id="tel-drs">—</span>
+                </div>
+              </div>
+              <div class="stats-hud-bars">
+                <div class="stats-bar-row">
+                  <span class="stats-bar-tag">THR</span>
+                  <div class="stats-bar-track">
+                    <div
+                      class="stats-bar-fill stats-bar-throttle"
+                      id="tel-throttle-bar"
+                    ></div>
+                  </div>
+                  <span class="stats-bar-pct" id="tel-throttle">—</span>
+                </div>
+                <div class="stats-bar-row">
+                  <span class="stats-bar-tag">BRK</span>
+                  <div class="stats-bar-track">
+                    <div
+                      class="stats-bar-fill stats-bar-brake"
+                      id="tel-brake-bar"
+                    ></div>
+                  </div>
+                  <span class="stats-bar-pct" id="tel-brake">—</span>
+                </div>
+              </div>
+              <div class="stats-hud-grid">
+                <div class="stats-mini">
+                  <span>Tyre</span><strong id="tel-tyre">—</strong>
+                </div>
+                <div
+                  class="stats-mini"
+                  title="Approximate laps remaining vs typical stint length for this compound (resets after a pit stop)"
+                >
+                  <span>Left</span><strong id="tel-tyre-life">—</strong>
+                </div>
+                <div
+                  class="stats-mini"
+                  title="Laps completed on this set of tyres since leaving the pits (from timing data)"
+                >
+                  <span>Laps since pit</span>
+                  <strong id="tel-tyre-stint">—</strong>
+                </div>
+                <div class="stats-mini">
+                  <span>Lap</span><strong id="tel-lap">—</strong>
+                </div>
+                <div class="stats-mini stats-mini-wide">
+                  <span>Distance</span><strong id="tel-dist">—</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="hud-bottom">
+          <div class="controls">
+            <button
+              type="button"
+              id="btn-play"
+              class="btn btn-icon"
+              disabled
+              title="Play"
+            >
+              ▶
+            </button>
+            <button
+              type="button"
+              id="btn-pause"
+              class="btn btn-icon"
+              disabled
+              title="Pause"
+            >
+              ⏸
+            </button>
+            <label class="field inline">
+              <span>Speed</span>
+              <select id="speed-select" disabled></select>
+            </label>
+            <label class="field inline grow scrub-field">
+              <span>Time</span>
+              <div class="scrub-touch-wrap scrub-stack">
+                <div
+                  id="scrub-markers"
+                  class="scrub-markers"
+                  aria-hidden="true"
+                ></div>
+                <input
+                  type="range"
+                  id="scrub"
+                  min="0"
+                  max="0"
+                  value="0"
+                  disabled
+                  aria-label="Session time"
+                />
+              </div>
+            </label>
+            <span id="time-readout" class="readout">—</span>
+            <button
+              type="button"
+              id="btn-copy-replay-link"
+              class="btn btn-copy-replay"
+              disabled
+              title="Copy link to this session and frame (shareable URL)"
+              aria-label="Copy link to this session and frame"
+            >
+              Copy link
+            </button>
+            <span
+              id="scrub-hover-tip"
+              class="scrub-hover-tip"
+              hidden
+              aria-hidden="true"
+            ></span>
+          </div>
+        </div>
+
+        <aside
+          class="leaderboard"
+          id="leaderboard"
+          aria-label="Drivers — click a row for telemetry"
+        >
+          <div class="leaderboard-head">
+            <h3>Drivers</h3>
+            <span
+              id="lb-session-time"
+              class="lb-session-time"
+              title="Session time at this frame"
+              >—</span
+            >
+          </div>
+          <div id="lb-list" class="lb-list" role="list"></div>
+        </aside>
+      </main>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
